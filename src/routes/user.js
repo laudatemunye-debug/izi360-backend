@@ -56,6 +56,47 @@ router.post('/request-access', authMiddleware, async (req, res) => {
   }
 })
 
+// Profil utilisateur
+router.get('/profile', authMiddleware, async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT id, nom, email, role, verified, created_at FROM users WHERE id = $1',
+      [req.user.id]
+    )
+    if (result.rows.length === 0) return res.status(404).json({ message: 'Utilisateur non trouvé' })
+    res.json(result.rows[0])
+  } catch (err) { res.status(500).json({ message: 'Erreur serveur' }) }
+})
+
+// Modifier le profil
+router.put('/profile', authMiddleware, async (req, res) => {
+  try {
+    const { nom } = req.body
+    if (!nom || !nom.trim()) return res.status(400).json({ message: 'Nom requis' })
+    const result = await pool.query(
+      'UPDATE users SET nom = $1 WHERE id = $2 RETURNING id, nom, email, role',
+      [nom.trim(), req.user.id]
+    )
+    res.json(result.rows[0])
+  } catch (err) { res.status(500).json({ message: 'Erreur serveur' }) }
+})
+
+// Changer mot de passe
+router.put('/change-password', authMiddleware, async (req, res) => {
+  try {
+    const { ancien, nouveau } = req.body
+    if (!ancien || !nouveau) return res.status(400).json({ message: 'Champs requis' })
+    if (nouveau.length < 6) return res.status(400).json({ message: 'Mot de passe trop court (6 min)' })
+    const result = await pool.query('SELECT password FROM users WHERE id = $1', [req.user.id])
+    const bcrypt = require('bcryptjs')
+    const valid = await bcrypt.compare(ancien, result.rows[0].password)
+    if (!valid) return res.status(401).json({ message: 'Ancien mot de passe incorrect' })
+    const hash = await bcrypt.hash(nouveau, 10)
+    await pool.query('UPDATE users SET password = $1 WHERE id = $2', [hash, req.user.id])
+    res.json({ message: 'Mot de passe mis à jour !' })
+  } catch (err) { res.status(500).json({ message: 'Erreur serveur' }) }
+})
+
 // Démarrer le trial d'un module
 router.post('/start-trial', authMiddleware, async (req, res) => {
   try {
@@ -92,3 +133,4 @@ router.post('/start-trial', authMiddleware, async (req, res) => {
 })
 
 module.exports = router
+// CETTE LIGNE DOIT ETRE AVANT module.exports
