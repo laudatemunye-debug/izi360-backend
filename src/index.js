@@ -4,6 +4,7 @@ require('dotenv').config()
 
 const authRoutes = require('./routes/auth')
 const adminRoutes = require('./routes/admin')
+const userRoutes = require('./routes/user')
 
 const app = express()
 const PORT = process.env.PORT || 5000
@@ -14,5 +15,6 @@ app.use(express.json())
 app.get('/', (req, res) => res.json({ message: 'IZI360 API v1.0', status: 'ok' }))
 app.use('/api/auth', authRoutes)
 app.use('/api/admin', adminRoutes)
+app.use('/api/user', userRoutes)
 
 app.listen(PORT, () => console.log(`IZI360 Backend running on port ${PORT}`))

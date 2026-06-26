@@ -92,9 +92,10 @@ exports.updateModule = async (req, res) => {
   try {
     const { id } = req.params
     const { prix_mensuel, prix_annuel, actif } = req.body
+    const { trial_days } = req.body
     const result = await pool.query(
-      'UPDATE modules SET prix_mensuel = $1, prix_annuel = $2, actif = $3 WHERE id = $4 RETURNING *',
-      [prix_mensuel, prix_annuel, actif, id]
+      'UPDATE modules SET prix_mensuel = $1, prix_annuel = $2, actif = $3, trial_days = $4 WHERE id = $5 RETURNING *',
+      [prix_mensuel, prix_annuel, actif, trial_days || 14, id]
     )
     res.json(result.rows[0])
   } catch (err) { res.status(500).json({ message: 'Erreur serveur' }) }
