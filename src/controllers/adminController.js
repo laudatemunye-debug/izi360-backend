@@ -142,9 +142,18 @@ exports.sendEmail = async (req, res) => {
 // Envoyer email à tous les utilisateurs
 exports.sendEmailAll = async (req, res) => {
   try {
-    const { subject, message } = req.body
+    const { subject, message, module_filter } = req.body
     if (!subject || !message) return res.status(400).json({ message: 'Sujet et message requis' })
-    const result = await pool.query('SELECT nom, email FROM users WHERE verified = TRUE AND active = TRUE')
+    let result
+    if (module_filter) {
+      result = await pool.query(`
+        SELECT DISTINCT u.nom, u.email FROM users u
+        JOIN licences l ON l.user_id = u.id
+        WHERE l.module_code = $1 AND l.actif = TRUE AND u.verified = TRUE AND u.active = TRUE
+      `, [module_filter])
+    } else {
+      result = await pool.query('SELECT nom, email FROM users WHERE verified = TRUE AND active = TRUE')
+    }
     const transporter = require('../config/mailer')
     let sent = 0
     for (const user of result.rows) {

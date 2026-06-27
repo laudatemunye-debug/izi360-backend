@@ -16,5 +16,6 @@ app.get('/', (req, res) => res.json({ message: 'IZI360 API v1.0', status: 'ok' }
 app.use('/api/auth', authRoutes)
 app.use('/api/admin', adminRoutes)
 app.use('/api/user', userRoutes)
+app.use('/api/beautycrm', require('./routes/beautycrm'))
 
 app.listen(PORT, () => console.log(`IZI360 Backend running on port ${PORT}`))
