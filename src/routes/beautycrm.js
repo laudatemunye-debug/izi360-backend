@@ -160,7 +160,7 @@ router.post('/notify', auth, async (req, res) => {
     if (req.user.role !== 'admin') return res.status(403).json({ message: 'Accès refusé' })
     const { subject, message } = req.body
     if (!subject || !message) return res.status(400).json({ message: 'Sujet et message requis' })
-    const result = await pool.query('SELECT email, nom FROM beautycrm_users WHERE email LIKE '%@%'')
+    const result = await pool.query("SELECT email, nom FROM beautycrm_users WHERE email LIKE '%@%'")
     const users = result.rows
     let sent = 0
     for (const user of users) {
