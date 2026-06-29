@@ -9,8 +9,9 @@ const userRoutes = require('./routes/user')
 const app = express()
 
 app.use(cors({
-  origin: ['https://izi-360.vercel.app', 'http://localhost:5173'],
-  credentials: true
+  origin: '*',
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
 }))
 app.use(express.json())
 
