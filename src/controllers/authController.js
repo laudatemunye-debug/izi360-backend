@@ -49,7 +49,7 @@ exports.register = async (req, res) => {
     res.status(201).json({ message: 'Inscription réussie ! Vérifiez votre email pour activer votre compte.' })
   } catch (err) {
     console.error(err)
-    res.status(500).json({ message: 'Erreur serveur' })
+    res.status(500).json({ message: err.message, stack: err.stack })
   }
 }
 
@@ -64,7 +64,7 @@ exports.verifyEmail = async (req, res) => {
     await pool.query('UPDATE users SET verified = TRUE, verification_token = NULL WHERE verification_token = $1', [token])
     res.json({ message: 'Email confirmé avec succès' })
   } catch (err) {
-    res.status(500).json({ message: 'Erreur serveur' })
+    res.status(500).json({ message: err.message, stack: err.stack })
   }
 }
 
@@ -86,7 +86,7 @@ exports.login = async (req, res) => {
     res.json({ token, user: { id: user.id, nom: user.nom, email: user.email, role: user.role } })
   } catch (err) {
     console.error(err)
-    res.status(500).json({ message: 'Erreur serveur' })
+    res.status(500).json({ message: err.message, stack: err.stack })
   }
 }
 
@@ -96,7 +96,7 @@ exports.me = async (req, res) => {
     if (result.rows.length === 0) return res.status(404).json({ message: 'Utilisateur non trouvé' })
     res.json(result.rows[0])
   } catch (err) {
-    res.status(500).json({ message: 'Erreur serveur' })
+    res.status(500).json({ message: err.message, stack: err.stack })
   }
 }
 
@@ -130,7 +130,7 @@ exports.resendVerification = async (req, res) => {
     res.json({ message: 'Email de confirmation renvoyé !' })
   } catch (err) {
     console.error(err)
-    res.status(500).json({ message: 'Erreur serveur' })
+    res.status(500).json({ message: err.message, stack: err.stack })
   }
 }
 
@@ -164,7 +164,7 @@ exports.forgotPassword = async (req, res) => {
     res.json({ message: 'Lien de réinitialisation envoyé !' })
   } catch (err) {
     console.error(err)
-    res.status(500).json({ message: 'Erreur serveur' })
+    res.status(500).json({ message: err.message, stack: err.stack })
   }
 }
 
@@ -180,6 +180,6 @@ exports.resetPassword = async (req, res) => {
     res.json({ message: 'Mot de passe mis à jour avec succès !' })
   } catch (err) {
     console.error(err)
-    res.status(500).json({ message: 'Erreur serveur' })
+    res.status(500).json({ message: err.message, stack: err.stack })
   }
 }
