@@ -8,7 +8,10 @@ const userRoutes = require('./routes/user')
 
 const app = express()
 
-app.use(cors({ origin: process.env.CLIENT_URL || 'http://localhost:5173' }))
+app.use(cors({
+  origin: ['https://izi-360.vercel.app', 'http://localhost:5173'],
+  credentials: true
+}))
 app.use(express.json())
 
 app.get('/', (req, res) => res.json({ message: 'IZI360 API v1.0', status: 'ok' }))
