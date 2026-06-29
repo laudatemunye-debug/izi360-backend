@@ -155,6 +155,26 @@ router.get('/stats', auth, async (req, res) => {
   } catch (err) { res.status(500).json({ message: 'Erreur serveur' }) }
 })
 
+router.patch('/users/:id', auth, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ message: 'Accès refusé' })
+    const { nom, email, telephone, pays, ville, entreprise, role, devise } = req.body
+    const result = await pool.query(
+      'UPDATE beautycrm_users SET nom=$1,email=$2,telephone=$3,pays=$4,ville=$5,entreprise=$6,role=$7,devise=$8 WHERE id=$9 RETURNING *',
+      [nom, email, telephone, pays, ville, entreprise, role, devise, req.params.id]
+    )
+    res.json(result.rows[0])
+  } catch (err) { res.status(500).json({ message: 'Erreur serveur' }) }
+})
+
+router.delete('/users/:id', auth, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ message: 'Accès refusé' })
+    await pool.query('DELETE FROM beautycrm_users WHERE id=$1', [req.params.id])
+    res.json({ message: 'Supprimé' })
+  } catch (err) { res.status(500).json({ message: 'Erreur serveur' }) }
+})
+
 router.post('/notify', auth, async (req, res) => {
   try {
     if (req.user.role !== 'admin') return res.status(403).json({ message: 'Accès refusé' })
