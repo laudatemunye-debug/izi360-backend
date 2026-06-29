@@ -155,4 +155,45 @@ router.get('/stats', auth, async (req, res) => {
   } catch (err) { res.status(500).json({ message: 'Erreur serveur' }) }
 })
 
+router.post('/notify', auth, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ message: 'Accès refusé' })
+    const { subject, message } = req.body
+    if (!subject || !message) return res.status(400).json({ message: 'Sujet et message requis' })
+    const result = await pool.query('SELECT email, nom FROM beautycrm_users WHERE email LIKE '%@%'')
+    const users = result.rows
+    let sent = 0
+    for (const user of users) {
+      try {
+        await transporter.sendMail({
+          from: `"BeautyCRM" <${process.env.MAIL_USER}>`,
+          to: user.email,
+          subject,
+          html: `
+            <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 0;">
+              <div style="background: linear-gradient(135deg, #C084FC, #9333EA); padding: 32px; text-align: center; border-radius: 12px 12px 0 0;">
+                <h1 style="color: #fff; margin: 0; font-size: 28px;">💄 BeautyCRM</h1>
+              </div>
+              <div style="padding: 32px; background: #fafafa;">
+                <p>Bonjour <strong>${user.nom || ''}</strong>,</p>
+                <div style="background: #fff; border-radius: 8px; padding: 20px; border: 1px solid #eee; white-space: pre-wrap; color: #333; line-height: 1.6;">${message}</div>
+                <hr style="border: none; border-top: 1px solid #eee; margin: 24px 0;">
+                <p style="color: #999; font-size: 12px; text-align: center;">
+                  Cordialement,<br><strong>L'équipe IZISOFT</strong><br>
+                  © 2026 IZISOFT · BeautyCRM
+                </p>
+              </div>
+            </div>
+          `
+        })
+        sent++
+      } catch(_) {}
+    }
+    res.json({ message: `Email envoyé à ${sent} utilisateur(s) !` })
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ message: 'Erreur serveur' })
+  }
+})
+
 module.exports = router
