@@ -32,16 +32,16 @@ exports.register = async (req, res) => {
       to: email,
       subject: 'Confirmez votre adresse email — IZI360',
       html: `
-        <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 32px;">
-          <h1 style="color: #1D9E75;">IZI<span style="color: #111">360</span></h1>
+        <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 32px; background:#fff;">
+          <h1 style="color: #1D9E75; margin-bottom: 8px;">IZI<span style="color: #111">360</span></h1>
           <p>Bonjour <strong>${nom}</strong>,</p>
-          <p>Merci de vous être inscrit sur IZI360. Cliquez sur le bouton ci-dessous pour confirmer votre adresse email :</p>
+          <p>Merci de vous être inscrit sur IZI360 ! Veuillez confirmer votre adresse email en cliquant sur le bouton ci-dessous :</p>
           <a href="${verifyUrl}" style="display:inline-block; background:#1D9E75; color:#fff; padding:12px 24px; border-radius:8px; text-decoration:none; font-weight:700; margin: 16px 0;">
-            Confirmer mon email
+            Confirmer mon email &rsaquo;
           </a>
-          <p style="color:#6B7280; font-size:12px;">Ce lien expire dans 24h. Si vous n'avez pas créé de compte, ignorez cet email.</p>
+          <p style="color:#6B7280; font-size:13px;">Ce lien expirera dans 24 heures.<br>Si vous n'avez pas créé de compte IZI360, vous pouvez ignorer cet email en toute sécurité.</p>
           <hr style="border:none; border-top:1px solid #eee; margin: 24px 0;">
-          <p style="color:#9CA3AF; font-size:11px;">IZI360 — La suite logicielle IZISOFT</p>
+          <p style="color:#9CA3AF; font-size:11px;">Cordialement,<br>L'équipe IZI360<br>&copy; 2026 IZISOFT</p>
         </div>
       `
     })
