@@ -201,8 +201,9 @@ router.get('/parrainage', auth, async (req, res) => {
       LEFT JOIN beautycrm_users f ON f.referred_by = p.referral_code
       WHERE p.referral_code IS NOT NULL
       GROUP BY p.id, p.nom, p.email, p.referral_code
-      ORDER BY nb_filleuls DESC
+      ORDER BY nb_filleuls DESC, p.nom ASC
     `)
+    // Retourner tous les utilisateurs avec code
     res.json(result.rows)
   } catch (err) { res.status(500).json({ message: 'Erreur serveur' }) }
 })
