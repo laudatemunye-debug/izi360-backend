@@ -8,13 +8,27 @@ const BEAUTYCRM_SECRET = process.env.BEAUTYCRM_SECRET || 'beautycrm_izi360_2026'
 
 router.post('/register', async (req, res) => {
   try {
-    const { secret, nom, email, telephone, pays, ville, entreprise, role, devise, version, plateforme, ip_address } = req.body
+    const { secret, nom, email, telephone, pays, ville, entreprise, role, devise, version, plateforme, ip_address, referred_by } = req.body
+    
+    // Générer code parrainage unique
+    const genCode = (nom) => {
+      const prefix = (nom||'USR').replace(/[^a-zA-Z]/g,'').toUpperCase().slice(0,4).padEnd(4,'X')
+      const suffix = Math.random().toString(36).toUpperCase().slice(2,6)
+      return prefix+'-'+suffix
+    }
+    let referral_code
+    let codeOk = false
+    while(!codeOk){
+      referral_code = genCode(nom)
+      const exists = await pool.query('SELECT id FROM beautycrm_users WHERE referral_code=$1',[referral_code])
+      if(exists.rows.length===0) codeOk=true
+    }
     if (secret !== BEAUTYCRM_SECRET) return res.status(401).json({ message: 'Non autorisé' })
     if (!email) return res.status(400).json({ message: 'Email requis' })
 
     const result = await pool.query(`
-      INSERT INTO beautycrm_users (nom, email, telephone, pays, ville, entreprise, role, devise, version, plateforme, ip_address)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+      INSERT INTO beautycrm_users (nom, email, telephone, pays, ville, entreprise, role, devise, version, plateforme, ip_address, referral_code, referred_by)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
       ON CONFLICT (email) DO UPDATE SET
         nom = EXCLUDED.nom, telephone = EXCLUDED.telephone,
         pays = EXCLUDED.pays, ville = EXCLUDED.ville,
@@ -22,7 +36,7 @@ router.post('/register', async (req, res) => {
         devise = EXCLUDED.devise, version = EXCLUDED.version,
         plateforme = EXCLUDED.plateforme
       RETURNING *, (xmax = 0) AS is_new
-    `, [nom, email, telephone, pays, ville, entreprise, role, devise, version, plateforme || 'web', ip_address || ''])
+    `, [nom, email, telephone, pays, ville, entreprise, role, devise, version, plateforme || 'web', ip_address || '', referral_code, referred_by || null])
 
     const user = result.rows[0]
 
