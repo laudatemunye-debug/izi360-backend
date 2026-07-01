@@ -189,6 +189,15 @@ router.delete('/users/:id', auth, async (req, res) => {
   } catch (err) { res.status(500).json({ message: 'Erreur serveur' }) }
 })
 
+router.get('/parrainage/count', async (req, res) => {
+  try {
+    const { code } = req.query
+    if (!code) return res.json({ count: 0 })
+    const result = await pool.query('SELECT COUNT(*) FROM beautycrm_users WHERE referred_by=$1', [code])
+    res.json({ count: parseInt(result.rows[0].count) })
+  } catch (err) { res.status(500).json({ count: 0 }) }
+})
+
 router.get('/parrainage', auth, async (req, res) => {
   try {
     if (req.user.role !== 'admin') return res.status(403).json({ message: 'Accès refusé' })
