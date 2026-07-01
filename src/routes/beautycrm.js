@@ -216,4 +216,13 @@ router.post('/notify', auth, async (req, res) => {
   }
 })
 
+// Supprimer un utilisateur BeautyCRM
+router.delete('/users/:id', auth, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ message: 'Accès refusé' })
+    await pool.query('DELETE FROM beautycrm_users WHERE id = $1', [req.params.id])
+    res.json({ message: 'Utilisateur supprimé' })
+  } catch (err) { res.status(500).json({ message: 'Erreur serveur' }) }
+})
+
 module.exports = router
