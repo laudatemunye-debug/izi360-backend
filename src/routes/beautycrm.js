@@ -8,13 +8,13 @@ const BEAUTYCRM_SECRET = process.env.BEAUTYCRM_SECRET || 'beautycrm_izi360_2026'
 
 router.post('/register', async (req, res) => {
   try {
-    const { secret, nom, email, telephone, pays, ville, entreprise, role, devise, version, plateforme } = req.body
+    const { secret, nom, email, telephone, pays, ville, entreprise, role, devise, version, plateforme, ip_address } = req.body
     if (secret !== BEAUTYCRM_SECRET) return res.status(401).json({ message: 'Non autorisé' })
     if (!email) return res.status(400).json({ message: 'Email requis' })
 
     const result = await pool.query(`
-      INSERT INTO beautycrm_users (nom, email, telephone, pays, ville, entreprise, role, devise, version, plateforme)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+      INSERT INTO beautycrm_users (nom, email, telephone, pays, ville, entreprise, role, devise, version, plateforme, ip_address)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
       ON CONFLICT (email) DO UPDATE SET
         nom = EXCLUDED.nom, telephone = EXCLUDED.telephone,
         pays = EXCLUDED.pays, ville = EXCLUDED.ville,
@@ -22,7 +22,7 @@ router.post('/register', async (req, res) => {
         devise = EXCLUDED.devise, version = EXCLUDED.version,
         plateforme = EXCLUDED.plateforme
       RETURNING *, (xmax = 0) AS is_new
-    `, [nom, email, telephone, pays, ville, entreprise, role, devise, version, plateforme || 'web'])
+    `, [nom, email, telephone, pays, ville, entreprise, role, devise, version, plateforme || 'web', ip_address || ''])
 
     const user = result.rows[0]
 
