@@ -117,6 +117,19 @@ router.patch('/:id', auth, async (req, res) => {
   }
 })
 
+// DELETE /api/brevets/:id - supprimer un brevet (admin)
+router.delete('/:id', auth, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ message: 'Accès refusé' })
+    const result = await pool.query('DELETE FROM brevets WHERE id=$1 RETURNING id', [req.params.id])
+    if (result.rows.length === 0) return res.status(404).json({ message: 'Brevet introuvable' })
+    res.json({ message: 'Brevet supprimé' })
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ message: 'Erreur serveur' })
+  }
+})
+
 // GET /api/brevets/:id - vérification publique (déclenchée par le scan du QR)
 router.get('/:id', async (req, res) => {
   try {
