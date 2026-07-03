@@ -89,6 +89,18 @@ router.post('/', auth, async (req, res) => {
   }
 })
 
+// DELETE /api/brevets/all - supprimer tous les brevets (admin, nettoyage mode essai)
+router.delete('/all', auth, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ message: 'Accès refusé' })
+    const result = await pool.query('DELETE FROM brevets RETURNING id')
+    res.json({ message: `${result.rows.length} brevet(s) supprimé(s)` })
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ message: 'Erreur serveur' })
+  }
+})
+
 // GET /api/brevets/all - liste complete (admin)
 router.get('/all', auth, async (req, res) => {
   try {
