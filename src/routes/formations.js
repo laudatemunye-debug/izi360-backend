@@ -124,6 +124,14 @@ router.post('/:id/inscriptions', async (req, res) => {
     const formation = await pool.query('SELECT id FROM formations WHERE id=$1', [req.params.id])
     if (formation.rows.length === 0) return res.status(404).json({ message: 'Formation introuvable' })
 
+    const doublon = await pool.query(
+      `SELECT id FROM formation_inscriptions WHERE formation_id=$1 AND TRIM(telephone)=TRIM($2)`,
+      [req.params.id, telephone]
+    )
+    if (doublon.rows.length > 0) {
+      return res.status(400).json({ message: 'Vous êtes déjà inscrit(e) à cette formation' })
+    }
+
     const result = await pool.query(
       `INSERT INTO formation_inscriptions (formation_id, nom, telephone, email, ville)
        VALUES ($1,$2,$3,$4,$5) RETURNING *`,
