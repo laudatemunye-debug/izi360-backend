@@ -100,6 +100,23 @@ router.get('/all', auth, async (req, res) => {
   }
 })
 
+// PATCH /api/brevets/:id - modifier un brevet (admin)
+router.patch('/:id', auth, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ message: 'Accès refusé' })
+    const { participant, lieu, dateFormation, duree, formateur } = req.body
+    const result = await pool.query(
+      `UPDATE brevets SET participant=$1, lieu=$2, date_formation=$3, duree=$4, formateur=$5 WHERE id=$6 RETURNING *`,
+      [participant, lieu, dateFormation, duree, formateur, req.params.id]
+    )
+    if (result.rows.length === 0) return res.status(404).json({ message: 'Brevet introuvable' })
+    res.json(result.rows[0])
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ message: 'Erreur serveur' })
+  }
+})
+
 // GET /api/brevets/:id - vérification publique (déclenchée par le scan du QR)
 router.get('/:id', async (req, res) => {
   try {
