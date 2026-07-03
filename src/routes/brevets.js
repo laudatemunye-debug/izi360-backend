@@ -89,6 +89,17 @@ router.post('/', auth, async (req, res) => {
   }
 })
 
+// GET /api/brevets/all - liste complete (admin)
+router.get('/all', auth, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ message: 'Accès refusé' })
+    const result = await pool.query('SELECT * FROM brevets ORDER BY created_at DESC')
+    res.json(result.rows)
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur' })
+  }
+})
+
 // GET /api/brevets/:id - vérification publique (déclenchée par le scan du QR)
 router.get('/:id', async (req, res) => {
   try {
