@@ -42,17 +42,26 @@ router.get('/', async (req, res) => {
   }
 })
 
-// GET /api/formations/all - liste complete (admin), avec nombre d'inscrits
+// GET /api/formations/all - liste complete (admin: toutes, formateur: la sienne)
 router.get('/all', auth, async (req, res) => {
   try {
-    if (req.user.role !== 'admin') return res.status(403).json({ message: 'Acces refuse' })
-    const result = await pool.query(`
-      SELECT f.*, COUNT(i.id) as nb_inscrits
-      FROM formations f
-      LEFT JOIN formation_inscriptions i ON i.formation_id = f.id
-      GROUP BY f.id
-      ORDER BY f.created_at DESC
-    `)
+    if (req.user.role !== 'admin' && req.user.role !== 'formateur') return res.status(403).json({ message: 'Acces refuse' })
+    const result = req.user.role === 'formateur'
+      ? await pool.query(`
+          SELECT f.*, COUNT(i.id) as nb_inscrits
+          FROM formations f
+          LEFT JOIN formation_inscriptions i ON i.formation_id = f.id
+          WHERE f.titre ILIKE '%' || $1 || '%'
+          GROUP BY f.id
+          ORDER BY f.created_at DESC
+        `, [req.user.formation_titre])
+      : await pool.query(`
+          SELECT f.*, COUNT(i.id) as nb_inscrits
+          FROM formations f
+          LEFT JOIN formation_inscriptions i ON i.formation_id = f.id
+          GROUP BY f.id
+          ORDER BY f.created_at DESC
+        `)
     res.json(result.rows)
   } catch (err) {
     res.status(500).json({ message: 'Erreur serveur' })
@@ -144,10 +153,17 @@ router.post('/:id/inscriptions', async (req, res) => {
   }
 })
 
-// GET /api/formations/:id/inscriptions - liste des inscrits (admin)
+// GET /api/formations/:id/inscriptions - liste des inscrits (admin: toutes, formateur: la sienne)
 router.get('/:id/inscriptions', auth, async (req, res) => {
   try {
-    if (req.user.role !== 'admin') return res.status(403).json({ message: 'Acces refuse' })
+    if (req.user.role !== 'admin' && req.user.role !== 'formateur') return res.status(403).json({ message: 'Acces refuse' })
+    if (req.user.role === 'formateur') {
+      const f = await pool.query('SELECT titre FROM formations WHERE id=$1', [req.params.id])
+      if (f.rows.length === 0) return res.status(404).json({ message: 'Formation introuvable' })
+      if (!f.rows[0].titre.toLowerCase().includes(req.user.formation_titre.toLowerCase())) {
+        return res.status(403).json({ message: 'Acces refuse' })
+      }
+    }
     const result = await pool.query(
       'SELECT * FROM formation_inscriptions WHERE formation_id=$1 ORDER BY created_at DESC',
       [req.params.id]
