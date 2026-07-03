@@ -18,6 +18,8 @@ async function ensureTable() {
     )
   `)
   await pool.query(`ALTER TABLE brevets ADD COLUMN IF NOT EXISTS numero VARCHAR(10)`)
+  await pool.query(`ALTER TABLE brevets ADD COLUMN IF NOT EXISTS telephone VARCHAR(50)`)
+  await pool.query(`ALTER TABLE brevets ADD COLUMN IF NOT EXISTS email VARCHAR(255)`)
 
   const manquants = await pool.query(
     `SELECT id, created_at FROM brevets WHERE numero IS NULL ORDER BY created_at ASC`
@@ -44,9 +46,12 @@ const genererId = () => {
 router.post('/', auth, async (req, res) => {
   try {
     if (req.user.role !== 'admin') return res.status(403).json({ message: 'Accès refusé' })
-    const { participant, lieu, dateFormation, duree, formateur, formation } = req.body
+    const { participant, telephone, email, lieu, dateFormation, duree, formateur, formation } = req.body
     if (!participant || !dateFormation) {
       return res.status(400).json({ message: 'Nom du participant et date requis' })
+    }
+    if (!telephone || !telephone.trim()) {
+      return res.status(400).json({ message: 'Numéro de téléphone du participant requis' })
     }
 
     const formationNom = formation || 'Production de Champignons'
@@ -77,9 +82,9 @@ router.post('/', auth, async (req, res) => {
     const numero = String(parseInt(compteResult.rows[0].count, 10) + 1).padStart(3, '0')
 
     const result = await pool.query(
-      `INSERT INTO brevets (id, participant, lieu, date_formation, duree, formateur, formation, numero)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
-      [id, participant, lieu, dateFormation, duree, formateur, formation || 'Production de Champignons', numero]
+      `INSERT INTO brevets (id, participant, telephone, email, lieu, date_formation, duree, formateur, formation, numero)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+      [id, participant, telephone, email || null, lieu, dateFormation, duree, formateur, formation || 'Production de Champignons', numero]
     )
 
     res.status(201).json(result.rows[0])
@@ -116,10 +121,10 @@ router.get('/all', auth, async (req, res) => {
 router.patch('/:id', auth, async (req, res) => {
   try {
     if (req.user.role !== 'admin') return res.status(403).json({ message: 'Accès refusé' })
-    const { participant, lieu, dateFormation, duree, formateur } = req.body
+    const { participant, telephone, email, lieu, dateFormation, duree, formateur } = req.body
     const result = await pool.query(
-      `UPDATE brevets SET participant=$1, lieu=$2, date_formation=$3, duree=$4, formateur=$5 WHERE id=$6 RETURNING *`,
-      [participant, lieu, dateFormation, duree, formateur, req.params.id]
+      `UPDATE brevets SET participant=$1, telephone=$2, email=$3, lieu=$4, date_formation=$5, duree=$6, formateur=$7 WHERE id=$8 RETURNING *`,
+      [participant, telephone, email, lieu, dateFormation, duree, formateur, req.params.id]
     )
     if (result.rows.length === 0) return res.status(404).json({ message: 'Brevet introuvable' })
     res.json(result.rows[0])
