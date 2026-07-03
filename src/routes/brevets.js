@@ -18,6 +18,19 @@ async function ensureTable() {
     )
   `)
   await pool.query(`ALTER TABLE brevets ADD COLUMN IF NOT EXISTS numero VARCHAR(10)`)
+
+  const manquants = await pool.query(
+    `SELECT id, created_at FROM brevets WHERE numero IS NULL ORDER BY created_at ASC`
+  )
+  for (const row of manquants.rows) {
+    const annee = new Date(row.created_at).getFullYear()
+    const compte = await pool.query(
+      `SELECT COUNT(*) FROM brevets WHERE numero IS NOT NULL AND date_part('year', created_at) = $1`,
+      [annee]
+    )
+    const numero = String(parseInt(compte.rows[0].count, 10) + 1).padStart(3, '0')
+    await pool.query(`UPDATE brevets SET numero=$1 WHERE id=$2`, [numero, row.id])
+  }
 }
 ensureTable().catch(err => console.error('Erreur création table brevets:', err))
 
