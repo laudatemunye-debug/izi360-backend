@@ -42,7 +42,10 @@ router.post('/', auth, async (req, res) => {
       [participant, formationNom]
     )
     if (doublon.rows.length > 0) {
-      return res.status(400).json({ message: `Un brevet existe déjà pour ${participant} sur cette formation (N° ${doublon.rows[0].id})` })
+      return res.status(400).json({
+        message: `Un brevet existe déjà pour ${participant} sur cette formation`,
+        existingId: doublon.rows[0].id,
+      })
     }
 
     let id
