@@ -45,8 +45,9 @@ const genererId = () => {
 // POST /api/brevets - créer un brevet (admin uniquement)
 router.post('/', auth, async (req, res) => {
   try {
-    if (req.user.role !== 'admin') return res.status(403).json({ message: 'Accès refusé' })
-    const { participant, telephone, email, lieu, dateFormation, duree, formateur, formation } = req.body
+    if (req.user.role !== 'admin' && req.user.role !== 'formateur') return res.status(403).json({ message: 'Accès refusé' })
+    const { participant, telephone, email, lieu, dateFormation, duree, formateur } = req.body
+    const formation = req.user.role === 'formateur' ? req.user.formation_titre : req.body.formation
     if (!participant || !dateFormation) {
       return res.status(400).json({ message: 'Nom du participant et date requis' })
     }
@@ -109,8 +110,10 @@ router.delete('/all', auth, async (req, res) => {
 // GET /api/brevets/all - liste complete (admin)
 router.get('/all', auth, async (req, res) => {
   try {
-    if (req.user.role !== 'admin') return res.status(403).json({ message: 'Accès refusé' })
-    const result = await pool.query('SELECT * FROM brevets ORDER BY created_at DESC')
+    if (req.user.role !== 'admin' && req.user.role !== 'formateur') return res.status(403).json({ message: 'Accès refusé' })
+    const result = req.user.role === 'formateur'
+      ? await pool.query('SELECT * FROM brevets WHERE formation=$1 ORDER BY created_at DESC', [req.user.formation_titre])
+      : await pool.query('SELECT * FROM brevets ORDER BY created_at DESC')
     res.json(result.rows)
   } catch (err) {
     res.status(500).json({ message: 'Erreur serveur' })
@@ -120,8 +123,13 @@ router.get('/all', auth, async (req, res) => {
 // PATCH /api/brevets/:id - modifier un brevet (admin)
 router.patch('/:id', auth, async (req, res) => {
   try {
-    if (req.user.role !== 'admin') return res.status(403).json({ message: 'Accès refusé' })
+    if (req.user.role !== 'admin' && req.user.role !== 'formateur') return res.status(403).json({ message: 'Accès refusé' })
     const { participant, telephone, email, lieu, dateFormation, duree, formateur } = req.body
+    if (req.user.role === 'formateur') {
+      const check = await pool.query('SELECT formation FROM brevets WHERE id=$1', [req.params.id])
+      if (check.rows.length === 0) return res.status(404).json({ message: 'Brevet introuvable' })
+      if (check.rows[0].formation !== req.user.formation_titre) return res.status(403).json({ message: 'Accès refusé' })
+    }
     const result = await pool.query(
       `UPDATE brevets SET participant=$1, telephone=$2, email=$3, lieu=$4, date_formation=$5, duree=$6, formateur=$7 WHERE id=$8 RETURNING *`,
       [participant, telephone, email, lieu, dateFormation, duree, formateur, req.params.id]

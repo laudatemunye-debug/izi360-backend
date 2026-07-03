@@ -82,7 +82,7 @@ exports.login = async (req, res) => {
     const valid = await bcrypt.compare(password, user.password)
     if (!valid) return res.status(401).json({ message: 'Email ou mot de passe incorrect' })
 
-    const token = jwt.sign({ id: user.id, email: user.email, role: user.role }, process.env.JWT_SECRET, { expiresIn: '7d' })
+    const token = jwt.sign({ id: user.id, email: user.email, role: user.role, formation_id: user.formation_id || null, formation_titre: user.formation_titre || null }, process.env.JWT_SECRET, { expiresIn: '7d' })
     res.json({ token, user: { id: user.id, nom: user.nom, email: user.email, role: user.role } })
   } catch (err) {
     console.error(err)
