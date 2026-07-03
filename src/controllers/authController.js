@@ -74,7 +74,20 @@ exports.login = async (req, res) => {
     if (!email || !password) return res.status(400).json({ message: 'Email et mot de passe requis' })
 
     const result = await pool.query('SELECT * FROM users WHERE email = $1', [email])
-    if (result.rows.length === 0) return res.status(401).json({ message: 'Email ou mot de passe incorrect' })
+    if (result.rows.length === 0) {
+      const demande = await pool.query(
+        `SELECT nom, formation_titre, statut FROM formateur_demandes WHERE email = $1 ORDER BY created_at DESC LIMIT 1`,
+        [email]
+      )
+      if (demande.rows.length > 0 && demande.rows[0].statut === 'en_attente') {
+        return res.status(403).json({
+          message: 'demande_en_attente',
+          nom: demande.rows[0].nom,
+          formation_titre: demande.rows[0].formation_titre,
+        })
+      }
+      return res.status(401).json({ message: 'Email ou mot de passe incorrect' })
+    }
 
     const user = result.rows[0]
     if (!user.verified) return res.status(401).json({ message: 'Veuillez confirmer votre email avant de vous connecter.' })
