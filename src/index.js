@@ -22,6 +22,7 @@ app.use('/api/auth', authRoutes)
 app.use('/api/admin', adminRoutes)
 app.use('/api/user', userRoutes)
 app.use('/api/beautycrm', require('./routes/beautycrm'))
+app.use('/api/brevets', require('./routes/brevets'))
 
 if (process.env.NODE_ENV !== 'production') {
   const PORT = process.env.PORT || 5000
