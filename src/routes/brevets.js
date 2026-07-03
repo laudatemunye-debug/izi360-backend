@@ -17,6 +17,7 @@ async function ensureTable() {
       created_at TIMESTAMP DEFAULT NOW()
     )
   `)
+  await pool.query(`ALTER TABLE brevets ADD COLUMN IF NOT EXISTS numero VARCHAR(10)`)
 }
 ensureTable().catch(err => console.error('Erreur création table brevets:', err))
 
@@ -43,10 +44,17 @@ router.post('/', auth, async (req, res) => {
       if (exists.rows.length === 0) idOk = true
     }
 
+    const anneeActuelle = new Date().getFullYear()
+    const compteResult = await pool.query(
+      `SELECT COUNT(*) FROM brevets WHERE date_part('year', created_at) = $1`,
+      [anneeActuelle]
+    )
+    const numero = String(parseInt(compteResult.rows[0].count, 10) + 1).padStart(3, '0')
+
     const result = await pool.query(
-      `INSERT INTO brevets (id, participant, lieu, date_formation, duree, formateur, formation)
-       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
-      [id, participant, lieu, dateFormation, duree, formateur, formation || 'Production de Champignons']
+      `INSERT INTO brevets (id, participant, lieu, date_formation, duree, formateur, formation, numero)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+      [id, participant, lieu, dateFormation, duree, formateur, formation || 'Production de Champignons', numero]
     )
 
     res.status(201).json(result.rows[0])
