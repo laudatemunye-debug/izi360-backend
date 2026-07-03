@@ -36,6 +36,15 @@ router.post('/', auth, async (req, res) => {
       return res.status(400).json({ message: 'Nom du participant et date requis' })
     }
 
+    const formationNom = formation || 'Production de Champignons'
+    const doublon = await pool.query(
+      `SELECT id FROM brevets WHERE LOWER(TRIM(participant))=LOWER(TRIM($1)) AND formation=$2`,
+      [participant, formationNom]
+    )
+    if (doublon.rows.length > 0) {
+      return res.status(400).json({ message: `Un brevet existe déjà pour ${participant} sur cette formation (N° ${doublon.rows[0].id})` })
+    }
+
     let id
     let idOk = false
     while (!idOk) {
