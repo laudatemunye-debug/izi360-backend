@@ -174,4 +174,27 @@ router.get('/:id/inscriptions', auth, async (req, res) => {
   }
 })
 
+// DELETE /api/formations/:id/inscriptions/:inscritId - supprimer un inscrit (admin: toutes, formateur: la sienne)
+router.delete('/:id/inscriptions/:inscritId', auth, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin' && req.user.role !== 'formateur') return res.status(403).json({ message: 'Acces refuse' })
+    if (req.user.role === 'formateur') {
+      const f = await pool.query('SELECT titre FROM formations WHERE id=$1', [req.params.id])
+      if (f.rows.length === 0) return res.status(404).json({ message: 'Formation introuvable' })
+      if (!f.rows[0].titre.toLowerCase().includes(req.user.formation_titre.toLowerCase())) {
+        return res.status(403).json({ message: 'Acces refuse' })
+      }
+    }
+    const result = await pool.query(
+      'DELETE FROM formation_inscriptions WHERE id=$1 AND formation_id=$2 RETURNING id',
+      [req.params.inscritId, req.params.id]
+    )
+    if (result.rows.length === 0) return res.status(404).json({ message: 'Inscrit introuvable' })
+    res.json({ message: 'Inscrit supprime' })
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ message: 'Erreur serveur' })
+  }
+})
+
 module.exports = router
