@@ -203,13 +203,13 @@ router.get('/parrainage', auth, async (req, res) => {
     if (req.user.role !== 'admin') return res.status(403).json({ message: 'Accès refusé' })
     const result = await pool.query(`
       SELECT 
-        p.id, p.nom, p.email, p.referral_code,
+        p.id, p.nom, p.email, p.telephone, p.referral_code,
         COUNT(f.id) as nb_filleuls,
-        json_agg(json_build_object('nom', f.nom, 'email', f.email, 'date', f.created_at)) FILTER (WHERE f.id IS NOT NULL) as filleuls
+        json_agg(json_build_object('nom', f.nom, 'email', f.email, 'telephone', f.telephone, 'date', f.created_at)) FILTER (WHERE f.id IS NOT NULL) as filleuls
       FROM beautycrm_users p
       LEFT JOIN beautycrm_users f ON f.referred_by = p.referral_code
       WHERE p.referral_code IS NOT NULL
-      GROUP BY p.id, p.nom, p.email, p.referral_code
+      GROUP BY p.id, p.nom, p.email, p.telephone, p.referral_code
       ORDER BY nb_filleuls DESC, p.nom ASC
     `)
     // Retourner tous les utilisateurs avec code
