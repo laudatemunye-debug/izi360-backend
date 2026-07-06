@@ -131,7 +131,7 @@ router.post('/revoke-employe', async (req, res) => {
   try {
     const { secret, admin_email, employe_id, motif } = req.body
     if (secret !== BEAUTYCRM_SECRET) return res.status(401).json({ message: 'Non autorise' })
-    await pool.query('UPDATE beautycrm_employes SET revoked=true, motif_revocation=$1 WHERE id=$2 AND admin_email=$3', [motif || '', employe_id, admin_email])
+    await pool.query('UPDATE beautycrm_employes SET revoked=true, motif_revocation=$1, revoked_at=NOW() WHERE id=$2 AND admin_email=$3', [motif || '', employe_id, admin_email])
     res.json({ success: true })
   } catch (e) { res.status(500).json({ message: 'Erreur serveur' }) }
 })
@@ -141,7 +141,7 @@ router.post('/employes-revoques', async (req, res) => {
   try {
     const { secret, admin_email } = req.body
     if (secret !== BEAUTYCRM_SECRET) return res.status(401).json({ message: 'Non autorise' })
-    const result = await pool.query('SELECT id, nom, poste, joined_at, motif_revocation FROM beautycrm_employes WHERE admin_email=$1 AND revoked=true ORDER BY joined_at DESC', [admin_email])
+    const result = await pool.query('SELECT id, nom, poste, joined_at, motif_revocation, revoked_at FROM beautycrm_employes WHERE admin_email=$1 AND revoked=true ORDER BY revoked_at DESC', [admin_email])
     res.json(result.rows)
   } catch (e) { res.status(500).json({ message: 'Erreur serveur' }) }
 })
