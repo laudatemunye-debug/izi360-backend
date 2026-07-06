@@ -11,6 +11,27 @@ const SUPPORT_WHATSAPP = '+243997245614'
 
 const BEAUTYCRM_SECRET = process.env.BEAUTYCRM_SECRET || 'beautycrm_izi360_2026'
 const SHARED_FILE_NAME = 'beautycrm-entreprise-data.json'
+const CALLMEBOT_APIKEY = process.env.CALLMEBOT_APIKEY || ''
+
+async function notifierAdmin({ adminWhatsapp, adminEmail, sujet, message }) {
+  try {
+    if (adminWhatsapp && CALLMEBOT_APIKEY) {
+      const phone = adminWhatsapp.replace(/[^0-9]/g, '')
+      const url = 'https://api.callmebot.com/whatsapp.php?phone=' + phone + '&text=' + encodeURIComponent(message) + '&apikey=' + CALLMEBOT_APIKEY
+      await fetch(url).catch(e => console.error('CallMeBot erreur:', e.message))
+    }
+    if (adminEmail) {
+      await transporter.sendMail({
+        from: SUPPORT_EMAIL,
+        to: adminEmail,
+        subject: sujet,
+        text: message,
+      }).catch(e => console.error('Email notif erreur:', e.message))
+    }
+  } catch (e) {
+    console.error('notifierAdmin erreur:', e.message)
+  }
+}
 
 function isValidEmail(email) {
   return typeof email === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())
@@ -254,9 +275,24 @@ router.post('/check-status', async (req, res) => {
     const facture = { nom: ent.fact_nom || '', adresse: ent.fact_adresse || '', telephone: ent.fact_telephone || '', email: ent.fact_email || '', logo: ent.fact_logo || '' }
 
     if (ent.fermee) {
+      notifierAdmin({
+        adminWhatsapp: ent.admin_whatsapp,
+        adminEmail: admin_email,
+        sujet: 'Alerte: un employe a vu le statut entreprise fermee',
+        message: 'Un employe (id ' + employe_id + ') a consulte son statut et l entreprise est marquee comme fermee. Motif: ' + (ent.motif_fermeture || 'aucun'),
+      })
       return res.json({ revoked: true, entreprise_fermee: true, admin_whatsapp: ent.admin_whatsapp || null, motif: ent.motif_fermeture || null, devise: ent.devise || null, facture })
     }
     if (result.rows.length === 0) return res.json({ revoked: true, admin_whatsapp: null, motif: null, devise: ent.devise || null, facture })
+
+    if (result.rows[0].revoked === true) {
+      notifierAdmin({
+        adminWhatsapp: ent.admin_whatsapp,
+        adminEmail: admin_email,
+        sujet: 'Alerte: employe revoque a tente une connexion',
+        message: 'L employe (id ' + employe_id + ') revoque a consulte son statut. Motif: ' + (result.rows[0].motif_revocation || 'aucun'),
+      })
+    }
 
     res.json({ revoked: result.rows[0].revoked === true, admin_whatsapp: ent.admin_whatsapp || null, motif: result.rows[0].motif_revocation || null, devise: ent.devise || null, facture })
   } catch (e) {
@@ -358,6 +394,12 @@ router.post('/status', async (req, res) => {
     if (!ent) return res.json({ blocked: false })
 
     if (ent.suspendue) {
+      notifierAdmin({
+        adminWhatsapp: SUPPORT_WHATSAPP,
+        adminEmail: SUPPORT_EMAIL,
+        sujet: 'Alerte: compte entreprise suspendu',
+        message: 'Le compte entreprise (' + admin_email + ') a affiche le statut suspendu. Motif: ' + (ent.motif_suspension || 'aucun'),
+      })
       return res.json({
         blocked: true,
         reason: 'suspendue',
