@@ -60,9 +60,12 @@ router.get('/oauth-callback', async (req, res) => {
 // 3. Admin genere un code d'invitation
 router.post('/generate-code', async (req, res) => {
   try {
-    const { secret, admin_email } = req.body
+    const { secret, admin_email, admin_whatsapp } = req.body
     if (secret !== BEAUTYCRM_SECRET) return res.status(401).json({ message: 'Non autorise' })
     if (!admin_email) return res.status(400).json({ message: 'admin_email requis' })
+    if (admin_whatsapp) {
+      await pool.query('UPDATE beautycrm_entreprises SET admin_whatsapp=$1 WHERE admin_email=$2', [admin_whatsapp, admin_email])
+    }
 
     const existing = await pool.query('SELECT refresh_token_encrypted FROM beautycrm_entreprises WHERE admin_email=$1', [admin_email])
     if (!existing.rows[0]?.refresh_token_encrypted) {
@@ -103,9 +106,10 @@ router.post('/join', async (req, res) => {
     const admin_email = result.rows[0].admin_email
 
     await pool.query('UPDATE beautycrm_entreprises SET code_used=true WHERE admin_email=$1', [admin_email])
-    await pool.query('INSERT INTO beautycrm_employes (admin_email, nom, poste) VALUES ($1,$2,$3)', [admin_email, nom, poste])
+    const inserted = await pool.query('INSERT INTO beautycrm_employes (admin_email, nom, poste) VALUES ($1,$2,$3) RETURNING id', [admin_email, nom, poste])
+    const entRow = await pool.query('SELECT admin_whatsapp FROM beautycrm_entreprises WHERE admin_email=$1', [admin_email])
 
-    res.json({ success: true, admin_email })
+    res.json({ success: true, admin_email, employe_id: inserted.rows[0].id, admin_whatsapp: entRow.rows[0]?.admin_whatsapp || null })
   } catch (e) {
     console.error(e)
     res.status(500).json({ message: 'Erreur serveur' })
@@ -130,6 +134,24 @@ router.post('/revoke-employe', async (req, res) => {
     await pool.query('UPDATE beautycrm_employes SET revoked=true WHERE id=$1 AND admin_email=$2', [employe_id, admin_email])
     res.json({ success: true })
   } catch (e) { res.status(500).json({ message: 'Erreur serveur' }) }
+})
+
+// 6b. Verifier si un employe a ete revoque (appelé par l'app employe au demarrage)
+router.post('/check-status', async (req, res) => {
+  try {
+    const { secret, admin_email, employe_id } = req.body
+    if (secret !== BEAUTYCRM_SECRET) return res.status(401).json({ message: 'Non autorise' })
+    if (!admin_email || !employe_id) return res.status(400).json({ message: 'Champs manquants' })
+
+    const result = await pool.query('SELECT revoked FROM beautycrm_employes WHERE id=$1 AND admin_email=$2', [employe_id, admin_email])
+    if (result.rows.length === 0) return res.json({ revoked: true, admin_whatsapp: null })
+
+    const entRow = await pool.query('SELECT admin_whatsapp FROM beautycrm_entreprises WHERE admin_email=$1', [admin_email])
+    res.json({ revoked: result.rows[0].revoked === true, admin_whatsapp: entRow.rows[0]?.admin_whatsapp || null })
+  } catch (e) {
+    console.error(e)
+    res.status(500).json({ message: 'Erreur serveur' })
+  }
 })
 
 // 7. Sync proxy : lecture/ecriture des donnees partagees (clients, ventes, produits...) sur le Drive de l'admin
