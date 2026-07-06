@@ -389,7 +389,7 @@ router.post('/status', async (req, res) => {
     if (secret !== BEAUTYCRM_SECRET) return res.status(401).json({ message: 'Non autorise' })
     if (!admin_email) return res.status(400).json({ message: 'admin_email requis' })
 
-    const result = await pool.query('SELECT suspendue, motif_suspension, fermee, motif_fermeture FROM beautycrm_entreprises WHERE admin_email=$1', [admin_email])
+    const result = await pool.query('SELECT suspendue, motif_suspension, fermee, motif_fermeture, admin_whatsapp FROM beautycrm_entreprises WHERE admin_email=$1', [admin_email])
     const ent = result.rows[0]
     if (!ent) return res.json({ blocked: false })
 
@@ -406,12 +406,12 @@ router.post('/status', async (req, res) => {
         motif: ent.motif_suspension || null,
         contact: role === 'admin'
           ? { type: 'support', email: SUPPORT_EMAIL, whatsapp: SUPPORT_WHATSAPP }
-          : { type: 'entreprise' },
+          : { type: 'entreprise', whatsapp: ent.admin_whatsapp || null },
       })
     }
 
     if (role === 'employe' && ent.fermee) {
-      return res.json({ blocked: true, reason: 'fermee', motif: ent.motif_fermeture || null, contact: { type: 'entreprise' } })
+      return res.json({ blocked: true, reason: 'fermee', motif: ent.motif_fermeture || null, contact: { type: 'entreprise', whatsapp: ent.admin_whatsapp || null } })
     }
 
     res.json({ blocked: false })
