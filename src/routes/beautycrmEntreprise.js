@@ -226,6 +226,7 @@ router.post('/fermer-entreprise', async (req, res) => {
             <p>La connexion Google Drive associee a ete revoquee.</p>
             ${motif ? `<p><strong>Motif :</strong> ${motif}</p>` : ''}
             <p>Vos employes ne pourront plus acceder aux donnees partagees de l'entreprise.</p>
+            <p style="margin-top:24px; color:#888; font-size:13px;">L'equipe BeautyCRM © IZIsoft 2026</p>
           </div>
         `,
       })
