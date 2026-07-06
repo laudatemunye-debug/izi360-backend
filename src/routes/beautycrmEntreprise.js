@@ -7,6 +7,10 @@ const { exchangeCodeForTokens, getAccessTokenFromRefresh, findFile, readFile, wr
 const BEAUTYCRM_SECRET = process.env.BEAUTYCRM_SECRET || 'beautycrm_izi360_2026'
 const SHARED_FILE_NAME = 'beautycrm-entreprise-data.json'
 
+function isValidEmail(email) {
+  return typeof email === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())
+}
+
 function genCode6() {
   return Math.floor(100000 + Math.random() * 900000).toString()
 }
@@ -15,6 +19,7 @@ function genCode6() {
 router.get('/oauth-start', (req, res) => {
   const { admin_email } = req.query
   if (!admin_email) return res.status(400).send('admin_email requis')
+  if (!isValidEmail(admin_email)) return res.status(400).send('Email invalide')
 
   const params = new URLSearchParams({
     client_id: process.env.GOOGLE_CLIENT_ID,
@@ -33,6 +38,7 @@ router.get('/oauth-callback', async (req, res) => {
   const { code, state: admin_email, error } = req.query
   if (error) return res.send(`<h2>Connexion annulee</h2><p>${error}</p>`)
   if (!code || !admin_email) return res.status(400).send('Parametres manquants')
+  if (!isValidEmail(admin_email)) return res.status(400).send('Email invalide')
 
   try {
     const tokens = await exchangeCodeForTokens(code)
@@ -63,6 +69,7 @@ router.post('/generate-code', async (req, res) => {
     const { secret, admin_email, admin_whatsapp } = req.body
     if (secret !== BEAUTYCRM_SECRET) return res.status(401).json({ message: 'Non autorise' })
     if (!admin_email) return res.status(400).json({ message: 'admin_email requis' })
+    if (!isValidEmail(admin_email)) return res.status(400).json({ message: 'Email invalide' })
     if (admin_whatsapp) {
       await pool.query('UPDATE beautycrm_entreprises SET admin_whatsapp=$1 WHERE admin_email=$2', [admin_whatsapp, admin_email])
     }
@@ -103,6 +110,22 @@ router.post('/set-devise', async (req, res) => {
   }
 })
 
+router.post('/set-facture', async (req, res) => {
+  try {
+    const { secret, admin_email, nom, adresse, telephone, email, logo } = req.body
+    if (secret !== BEAUTYCRM_SECRET) return res.status(401).json({ message: 'Non autorise' })
+    if (!admin_email) return res.status(400).json({ message: 'Champs manquants' })
+    await pool.query(
+      'UPDATE beautycrm_entreprises SET fact_nom=$1, fact_adresse=$2, fact_telephone=$3, fact_email=$4, fact_logo=$5 WHERE admin_email=$6',
+      [nom || '', adresse || '', telephone || '', email || '', logo || '', admin_email]
+    )
+    res.json({ success: true })
+  } catch (e) {
+    console.error(e)
+    res.status(500).json({ message: 'Erreur serveur' })
+  }
+})
+
 router.post('/join', async (req, res) => {
   try {
     const { secret, code, nom, poste } = req.body
@@ -120,9 +143,14 @@ router.post('/join', async (req, res) => {
 
     await pool.query('UPDATE beautycrm_entreprises SET code_used=true WHERE admin_email=$1', [admin_email])
     const inserted = await pool.query('INSERT INTO beautycrm_employes (admin_email, nom, poste) VALUES ($1,$2,$3) RETURNING id', [admin_email, nom, poste])
-    const entRow = await pool.query('SELECT admin_whatsapp, devise FROM beautycrm_entreprises WHERE admin_email=$1', [admin_email])
+    const entRow = await pool.query('SELECT admin_whatsapp, devise, fact_nom, fact_adresse, fact_telephone, fact_email, fact_logo FROM beautycrm_entreprises WHERE admin_email=$1', [admin_email])
+    const er = entRow.rows[0] || {}
 
-    res.json({ success: true, admin_email, employe_id: inserted.rows[0].id, admin_whatsapp: entRow.rows[0]?.admin_whatsapp || null, devise: entRow.rows[0]?.devise || null })
+    res.json({
+      success: true, admin_email, employe_id: inserted.rows[0].id,
+      admin_whatsapp: er.admin_whatsapp || null, devise: er.devise || null,
+      facture: { nom: er.fact_nom || '', adresse: er.fact_adresse || '', telephone: er.fact_telephone || '', email: er.fact_email || '', logo: er.fact_logo || '' },
+    })
   } catch (e) {
     console.error(e)
     res.status(500).json({ message: 'Erreur serveur' })
@@ -181,15 +209,16 @@ router.post('/check-status', async (req, res) => {
     if (!admin_email || !employe_id) return res.status(400).json({ message: 'Champs manquants' })
 
     const result = await pool.query('SELECT revoked, motif_revocation FROM beautycrm_employes WHERE id=$1 AND admin_email=$2', [employe_id, admin_email])
-    const entRow = await pool.query('SELECT admin_whatsapp, fermee, motif_fermeture, devise FROM beautycrm_entreprises WHERE admin_email=$1', [admin_email])
+    const entRow = await pool.query('SELECT admin_whatsapp, fermee, motif_fermeture, devise, fact_nom, fact_adresse, fact_telephone, fact_email, fact_logo FROM beautycrm_entreprises WHERE admin_email=$1', [admin_email])
     const ent = entRow.rows[0] || {}
+    const facture = { nom: ent.fact_nom || '', adresse: ent.fact_adresse || '', telephone: ent.fact_telephone || '', email: ent.fact_email || '', logo: ent.fact_logo || '' }
 
     if (ent.fermee) {
-      return res.json({ revoked: true, entreprise_fermee: true, admin_whatsapp: ent.admin_whatsapp || null, motif: ent.motif_fermeture || null, devise: ent.devise || null })
+      return res.json({ revoked: true, entreprise_fermee: true, admin_whatsapp: ent.admin_whatsapp || null, motif: ent.motif_fermeture || null, devise: ent.devise || null, facture })
     }
-    if (result.rows.length === 0) return res.json({ revoked: true, admin_whatsapp: null, motif: null, devise: ent.devise || null })
+    if (result.rows.length === 0) return res.json({ revoked: true, admin_whatsapp: null, motif: null, devise: ent.devise || null, facture })
 
-    res.json({ revoked: result.rows[0].revoked === true, admin_whatsapp: ent.admin_whatsapp || null, motif: result.rows[0].motif_revocation || null, devise: ent.devise || null })
+    res.json({ revoked: result.rows[0].revoked === true, admin_whatsapp: ent.admin_whatsapp || null, motif: result.rows[0].motif_revocation || null, devise: ent.devise || null, facture })
   } catch (e) {
     console.error(e)
     res.status(500).json({ message: 'Erreur serveur' })
