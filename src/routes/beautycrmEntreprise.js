@@ -146,6 +146,20 @@ router.post('/employes-revoques', async (req, res) => {
   } catch (e) { res.status(500).json({ message: 'Erreur serveur' }) }
 })
 
+// 5b. Admin ferme l'entreprise (desactive le mode entreprise avec un motif communique aux employes)
+router.post('/fermer-entreprise', async (req, res) => {
+  try {
+    const { secret, admin_email, motif } = req.body
+    if (secret !== BEAUTYCRM_SECRET) return res.status(401).json({ message: 'Non autorise' })
+    if (!admin_email) return res.status(400).json({ message: 'admin_email requis' })
+    await pool.query('UPDATE beautycrm_entreprises SET fermee=true, motif_fermeture=$1 WHERE admin_email=$2', [motif || '', admin_email])
+    res.json({ success: true })
+  } catch (e) {
+    console.error(e)
+    res.status(500).json({ message: 'Erreur serveur' })
+  }
+})
+
 // 6b. Verifier si un employe a ete revoque (appelé par l'app employe au demarrage)
 router.post('/check-status', async (req, res) => {
   try {
@@ -154,10 +168,15 @@ router.post('/check-status', async (req, res) => {
     if (!admin_email || !employe_id) return res.status(400).json({ message: 'Champs manquants' })
 
     const result = await pool.query('SELECT revoked, motif_revocation FROM beautycrm_employes WHERE id=$1 AND admin_email=$2', [employe_id, admin_email])
+    const entRow = await pool.query('SELECT admin_whatsapp, fermee, motif_fermeture FROM beautycrm_entreprises WHERE admin_email=$1', [admin_email])
+    const ent = entRow.rows[0] || {}
+
+    if (ent.fermee) {
+      return res.json({ revoked: true, entreprise_fermee: true, admin_whatsapp: ent.admin_whatsapp || null, motif: ent.motif_fermeture || null })
+    }
     if (result.rows.length === 0) return res.json({ revoked: true, admin_whatsapp: null, motif: null })
 
-    const entRow = await pool.query('SELECT admin_whatsapp FROM beautycrm_entreprises WHERE admin_email=$1', [admin_email])
-    res.json({ revoked: result.rows[0].revoked === true, admin_whatsapp: entRow.rows[0]?.admin_whatsapp || null, motif: result.rows[0].motif_revocation || null })
+    res.json({ revoked: result.rows[0].revoked === true, admin_whatsapp: ent.admin_whatsapp || null, motif: result.rows[0].motif_revocation || null })
   } catch (e) {
     console.error(e)
     res.status(500).json({ message: 'Erreur serveur' })
