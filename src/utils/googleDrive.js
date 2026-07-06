@@ -80,4 +80,15 @@ async function writeFile(accessToken, fileName, dataObj, existingFileId) {
   return res.json()
 }
 
-module.exports = { exchangeCodeForTokens, getAccessTokenFromRefresh, findFile, readFile, writeFile }
+async function revokeToken(token) {
+  try {
+    await fetch('https://oauth2.googleapis.com/revoke?token=' + encodeURIComponent(token), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    })
+  } catch (e) {
+    console.error('Erreur revocation token Google:', e.message)
+  }
+}
+
+module.exports = { exchangeCodeForTokens, getAccessTokenFromRefresh, findFile, readFile, writeFile, revokeToken }

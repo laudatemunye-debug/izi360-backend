@@ -3,7 +3,8 @@ const router = express.Router()
 const pool = require('../config/db')
 const auth = require('../middleware/auth')
 const { encrypt, decrypt } = require('../utils/cryptoServer')
-const { exchangeCodeForTokens, getAccessTokenFromRefresh, findFile, readFile, writeFile } = require('../utils/googleDrive')
+const { exchangeCodeForTokens, getAccessTokenFromRefresh, findFile, readFile, writeFile, revokeToken } = require('../utils/googleDrive')
+const transporter = require('../config/mailer')
 
 const SUPPORT_EMAIL = 'supportizi26@gmail.com'
 const SUPPORT_WHATSAPP = '+243997245614'
@@ -203,7 +204,31 @@ router.post('/fermer-entreprise', async (req, res) => {
     const { secret, admin_email, motif } = req.body
     if (secret !== BEAUTYCRM_SECRET) return res.status(401).json({ message: 'Non autorise' })
     if (!admin_email) return res.status(400).json({ message: 'admin_email requis' })
-    await pool.query('UPDATE beautycrm_entreprises SET fermee=true, motif_fermeture=$1 WHERE admin_email=$2', [motif || '', admin_email])
+
+    const row = await pool.query('SELECT refresh_token_encrypted FROM beautycrm_entreprises WHERE admin_email=$1', [admin_email])
+    const encrypted = row.rows[0]?.refresh_token_encrypted
+    if (encrypted) {
+      const refreshToken = decrypt(encrypted)
+      await revokeToken(refreshToken)
+    }
+
+    await pool.query('UPDATE beautycrm_entreprises SET fermee=true, motif_fermeture=$1, refresh_token_encrypted=NULL WHERE admin_email=$2', [motif || '', admin_email])
+
+    transporter.sendMail({
+      from: `"IZI360" <${process.env.MAIL_USER}>`,
+      to: admin_email,
+      subject: 'Fermeture du mode entreprise — BeautyCRM',
+      html: `
+        <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 32px;">
+          <h1 style="color: #1D9E75;">IZI<span style="color: #111">360</span></h1>
+          <p>Le mode entreprise de votre compte BeautyCRM a ete ferme avec succes.</p>
+          <p>La connexion Google Drive associee a ete revoquee.</p>
+          ${motif ? `<p><strong>Motif :</strong> ${motif}</p>` : ''}
+          <p>Vos employes ne pourront plus acceder aux donnees partagees de l'entreprise.</p>
+        </div>
+      `,
+    }).catch(e => console.error('Erreur envoi email fermeture:', e.message))
+
     res.json({ success: true })
   } catch (e) {
     console.error(e)
