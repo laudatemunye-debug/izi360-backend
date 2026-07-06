@@ -214,20 +214,24 @@ router.post('/fermer-entreprise', async (req, res) => {
 
     await pool.query('UPDATE beautycrm_entreprises SET fermee=true, motif_fermeture=$1, refresh_token_encrypted=NULL WHERE admin_email=$2', [motif || '', admin_email])
 
-    transporter.sendMail({
-      from: `"IZI360" <${process.env.MAIL_USER}>`,
-      to: admin_email,
-      subject: 'Fermeture du mode entreprise — BeautyCRM',
-      html: `
-        <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 32px;">
-          <h1 style="color: #1D9E75;">IZI<span style="color: #111">360</span></h1>
-          <p>Le mode entreprise de votre compte BeautyCRM a ete ferme avec succes.</p>
-          <p>La connexion Google Drive associee a ete revoquee.</p>
-          ${motif ? `<p><strong>Motif :</strong> ${motif}</p>` : ''}
-          <p>Vos employes ne pourront plus acceder aux donnees partagees de l'entreprise.</p>
-        </div>
-      `,
-    }).catch(e => console.error('Erreur envoi email fermeture:', e.message))
+    try {
+      await transporter.sendMail({
+        from: `"IZI360" <${process.env.MAIL_USER}>`,
+        to: admin_email,
+        subject: 'Fermeture du mode entreprise — BeautyCRM',
+        html: `
+          <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 32px;">
+            <h1 style="color: #1D9E75;">IZI<span style="color: #111">360</span></h1>
+            <p>Le mode entreprise de votre compte BeautyCRM a ete ferme avec succes.</p>
+            <p>La connexion Google Drive associee a ete revoquee.</p>
+            ${motif ? `<p><strong>Motif :</strong> ${motif}</p>` : ''}
+            <p>Vos employes ne pourront plus acceder aux donnees partagees de l'entreprise.</p>
+          </div>
+        `,
+      })
+    } catch (e) {
+      console.error('Erreur envoi email fermeture:', e.message)
+    }
 
     res.json({ success: true })
   } catch (e) {
