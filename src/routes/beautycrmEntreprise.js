@@ -59,7 +59,13 @@ router.get('/oauth-callback', async (req, res) => {
 
     res.send(`<html><body style="font-family:sans-serif;text-align:center;padding:60px;">
       <h2>✅ Connexion reussie</h2>
-      <p>Vous pouvez fermer cette fenetre et retourner sur BeautyCRM.</p>
+      <p>Cette fenetre va se fermer automatiquement...</p>
+      <script>
+        if (window.opener) {
+          window.opener.postMessage({ type: 'izi360_drive_connected', admin_email: '${admin_email}' }, '*');
+        }
+        setTimeout(function() { window.close(); }, 800);
+      </script>
     </body></html>`)
   } catch (e) {
     console.error(e)
