@@ -1,8 +1,12 @@
 const express = require('express')
 const router = express.Router()
 const pool = require('../config/db')
+const auth = require('../middleware/auth')
 const { encrypt, decrypt } = require('../utils/cryptoServer')
 const { exchangeCodeForTokens, getAccessTokenFromRefresh, findFile, readFile, writeFile } = require('../utils/googleDrive')
+
+const SUPPORT_EMAIL = 'supportizi26@gmail.com'
+const SUPPORT_WHATSAPP = '+243997245614'
 
 const BEAUTYCRM_SECRET = process.env.BEAUTYCRM_SECRET || 'beautycrm_izi360_2026'
 const SHARED_FILE_NAME = 'beautycrm-entreprise-data.json'
@@ -254,6 +258,85 @@ router.post('/sync', async (req, res) => {
     }
 
     res.status(400).json({ message: 'action invalide' })
+  } catch (e) {
+    console.error(e)
+    res.status(500).json({ message: 'Erreur serveur' })
+  }
+})
+
+// === ADMIN IZI360 (support) : gestion des suspensions d'entreprise ===
+
+// Liste toutes les entreprises (pour le panneau admin izi360)
+router.get('/admin/list', auth, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ message: 'Acces refuse' })
+    const result = await pool.query(`
+      SELECT e.admin_email, e.fermee, e.suspendue, e.motif_suspension, e.created_at,
+        (SELECT COUNT(*) FROM beautycrm_employes emp WHERE emp.admin_email = e.admin_email AND emp.revoked=false) as nb_employes
+      FROM beautycrm_entreprises e ORDER BY e.created_at DESC
+    `)
+    res.json(result.rows)
+  } catch (e) {
+    console.error(e)
+    res.status(500).json({ message: 'Erreur serveur' })
+  }
+})
+
+// Suspendre une entreprise (support izi360)
+router.post('/admin/suspend', auth, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ message: 'Acces refuse' })
+    const { admin_email, motif } = req.body
+    if (!admin_email) return res.status(400).json({ message: 'admin_email requis' })
+    await pool.query('UPDATE beautycrm_entreprises SET suspendue=true, motif_suspension=$1, suspended_at=NOW() WHERE admin_email=$2', [motif || '', admin_email])
+    res.json({ success: true })
+  } catch (e) {
+    console.error(e)
+    res.status(500).json({ message: 'Erreur serveur' })
+  }
+})
+
+// Reactiver une entreprise suspendue
+router.post('/admin/unsuspend', auth, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ message: 'Acces refuse' })
+    const { admin_email } = req.body
+    if (!admin_email) return res.status(400).json({ message: 'admin_email requis' })
+    await pool.query('UPDATE beautycrm_entreprises SET suspendue=false, motif_suspension=NULL, suspended_at=NULL WHERE admin_email=$1', [admin_email])
+    res.json({ success: true })
+  } catch (e) {
+    console.error(e)
+    res.status(500).json({ message: 'Erreur serveur' })
+  }
+})
+
+// === STATUT consulte par l'app au demarrage (admin ET employe) ===
+router.post('/status', async (req, res) => {
+  try {
+    const { secret, admin_email, role } = req.body
+    if (secret !== BEAUTYCRM_SECRET) return res.status(401).json({ message: 'Non autorise' })
+    if (!admin_email) return res.status(400).json({ message: 'admin_email requis' })
+
+    const result = await pool.query('SELECT suspendue, motif_suspension, fermee, motif_fermeture FROM beautycrm_entreprises WHERE admin_email=$1', [admin_email])
+    const ent = result.rows[0]
+    if (!ent) return res.json({ blocked: false })
+
+    if (ent.suspendue) {
+      return res.json({
+        blocked: true,
+        reason: 'suspendue',
+        motif: ent.motif_suspension || null,
+        contact: role === 'admin'
+          ? { type: 'support', email: SUPPORT_EMAIL, whatsapp: SUPPORT_WHATSAPP }
+          : { type: 'entreprise' },
+      })
+    }
+
+    if (role === 'employe' && ent.fermee) {
+      return res.json({ blocked: true, reason: 'fermee', motif: ent.motif_fermeture || null, contact: { type: 'entreprise' } })
+    }
+
+    res.json({ blocked: false })
   } catch (e) {
     console.error(e)
     res.status(500).json({ message: 'Erreur serveur' })
