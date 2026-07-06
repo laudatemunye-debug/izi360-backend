@@ -90,6 +90,19 @@ router.post('/generate-code', async (req, res) => {
 })
 
 // 4. Employe rejoint avec un code
+router.post('/set-devise', async (req, res) => {
+  try {
+    const { secret, admin_email, devise } = req.body
+    if (secret !== BEAUTYCRM_SECRET) return res.status(401).json({ message: 'Non autorise' })
+    if (!admin_email || !devise) return res.status(400).json({ message: 'Champs manquants' })
+    await pool.query('UPDATE beautycrm_entreprises SET devise=$1 WHERE admin_email=$2', [devise, admin_email])
+    res.json({ success: true })
+  } catch (e) {
+    console.error(e)
+    res.status(500).json({ message: 'Erreur serveur' })
+  }
+})
+
 router.post('/join', async (req, res) => {
   try {
     const { secret, code, nom, poste } = req.body
@@ -107,9 +120,9 @@ router.post('/join', async (req, res) => {
 
     await pool.query('UPDATE beautycrm_entreprises SET code_used=true WHERE admin_email=$1', [admin_email])
     const inserted = await pool.query('INSERT INTO beautycrm_employes (admin_email, nom, poste) VALUES ($1,$2,$3) RETURNING id', [admin_email, nom, poste])
-    const entRow = await pool.query('SELECT admin_whatsapp FROM beautycrm_entreprises WHERE admin_email=$1', [admin_email])
+    const entRow = await pool.query('SELECT admin_whatsapp, devise FROM beautycrm_entreprises WHERE admin_email=$1', [admin_email])
 
-    res.json({ success: true, admin_email, employe_id: inserted.rows[0].id, admin_whatsapp: entRow.rows[0]?.admin_whatsapp || null })
+    res.json({ success: true, admin_email, employe_id: inserted.rows[0].id, admin_whatsapp: entRow.rows[0]?.admin_whatsapp || null, devise: entRow.rows[0]?.devise || null })
   } catch (e) {
     console.error(e)
     res.status(500).json({ message: 'Erreur serveur' })
@@ -168,15 +181,15 @@ router.post('/check-status', async (req, res) => {
     if (!admin_email || !employe_id) return res.status(400).json({ message: 'Champs manquants' })
 
     const result = await pool.query('SELECT revoked, motif_revocation FROM beautycrm_employes WHERE id=$1 AND admin_email=$2', [employe_id, admin_email])
-    const entRow = await pool.query('SELECT admin_whatsapp, fermee, motif_fermeture FROM beautycrm_entreprises WHERE admin_email=$1', [admin_email])
+    const entRow = await pool.query('SELECT admin_whatsapp, fermee, motif_fermeture, devise FROM beautycrm_entreprises WHERE admin_email=$1', [admin_email])
     const ent = entRow.rows[0] || {}
 
     if (ent.fermee) {
-      return res.json({ revoked: true, entreprise_fermee: true, admin_whatsapp: ent.admin_whatsapp || null, motif: ent.motif_fermeture || null })
+      return res.json({ revoked: true, entreprise_fermee: true, admin_whatsapp: ent.admin_whatsapp || null, motif: ent.motif_fermeture || null, devise: ent.devise || null })
     }
-    if (result.rows.length === 0) return res.json({ revoked: true, admin_whatsapp: null, motif: null })
+    if (result.rows.length === 0) return res.json({ revoked: true, admin_whatsapp: null, motif: null, devise: ent.devise || null })
 
-    res.json({ revoked: result.rows[0].revoked === true, admin_whatsapp: ent.admin_whatsapp || null, motif: result.rows[0].motif_revocation || null })
+    res.json({ revoked: result.rows[0].revoked === true, admin_whatsapp: ent.admin_whatsapp || null, motif: result.rows[0].motif_revocation || null, devise: ent.devise || null })
   } catch (e) {
     console.error(e)
     res.status(500).json({ message: 'Erreur serveur' })
