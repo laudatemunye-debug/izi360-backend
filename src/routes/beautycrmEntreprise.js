@@ -174,12 +174,29 @@ router.post('/join', async (req, res) => {
     const admin_email = result.rows[0].admin_email
 
     await pool.query('UPDATE beautycrm_entreprises SET code_used=true WHERE admin_email=$1', [admin_email])
-    const inserted = await pool.query('INSERT INTO beautycrm_employes (admin_email, nom, poste) VALUES ($1,$2,$3) RETURNING id', [admin_email, nom, poste])
+
+    // Si un employe du meme nom existe deja marque vole/perdu, on le reactive au lieu d'en creer un nouveau (evite les doublons)
+    const existingVole = await pool.query(
+      'SELECT id FROM beautycrm_employes WHERE admin_email=$1 AND nom=$2 AND vole=true AND revoked=false',
+      [admin_email, nom]
+    )
+    let employeId
+    if (existingVole.rows.length > 0) {
+      employeId = existingVole.rows[0].id
+      await pool.query(
+        'UPDATE beautycrm_employes SET poste=$1, vole=false, vole_code=NULL, vole_code_expiry=NULL WHERE id=$2',
+        [poste, employeId]
+      )
+    } else {
+      const inserted = await pool.query('INSERT INTO beautycrm_employes (admin_email, nom, poste) VALUES ($1,$2,$3) RETURNING id', [admin_email, nom, poste])
+      employeId = inserted.rows[0].id
+    }
+
     const entRow = await pool.query('SELECT admin_whatsapp, devise, fact_nom, fact_adresse, fact_telephone, fact_email, fact_logo FROM beautycrm_entreprises WHERE admin_email=$1', [admin_email])
     const er = entRow.rows[0] || {}
 
     res.json({
-      success: true, admin_email, employe_id: inserted.rows[0].id,
+      success: true, admin_email, employe_id: employeId,
       admin_whatsapp: er.admin_whatsapp || null, devise: er.devise || null,
       facture: { nom: er.fact_nom || '', adresse: er.fact_adresse || '', telephone: er.fact_telephone || '', email: er.fact_email || '', logo: er.fact_logo || '' },
     })
@@ -194,7 +211,7 @@ router.post('/employes', async (req, res) => {
   try {
     const { secret, admin_email } = req.body
     if (secret !== BEAUTYCRM_SECRET) return res.status(401).json({ message: 'Non autorise' })
-    const result = await pool.query('SELECT id, nom, poste, joined_at, vole, vole_code, vole_code_expiry FROM beautycrm_employes WHERE admin_email=$1 AND revoked=false ORDER BY joined_at DESC', [admin_email])
+    const result = await pool.query('SELECT id, nom, poste, joined_at, vole, vole_code, vole_code_expiry FROM beautycrm_employes WHERE admin_email=$1 AND revoked=false AND vole=false ORDER BY joined_at DESC', [admin_email])
     res.json(result.rows)
   } catch (e) { res.status(500).json({ message: 'Erreur serveur' }) }
 })
@@ -259,6 +276,16 @@ router.post('/verifier-vole', async (req, res) => {
     console.error(e)
     res.status(500).json({ message: 'Erreur serveur' })
   }
+})
+
+// 6f. Liste des employes voles/perdus (pour l'onglet dedie de l'admin)
+router.post('/employes-voles', async (req, res) => {
+  try {
+    const { secret, admin_email } = req.body
+    if (secret !== BEAUTYCRM_SECRET) return res.status(401).json({ message: 'Non autorise' })
+    const result = await pool.query('SELECT id, nom, poste, joined_at, vole_code, vole_code_expiry FROM beautycrm_employes WHERE admin_email=$1 AND revoked=false AND vole=true ORDER BY joined_at DESC', [admin_email])
+    res.json(result.rows)
+  } catch (e) { res.status(500).json({ message: 'Erreur serveur' }) }
 })
 
 // 6c. Liste des employes revoques (pour le menu "Anciens employes" de l'admin)
