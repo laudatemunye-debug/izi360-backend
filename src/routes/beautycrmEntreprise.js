@@ -194,7 +194,7 @@ router.post('/employes', async (req, res) => {
   try {
     const { secret, admin_email } = req.body
     if (secret !== BEAUTYCRM_SECRET) return res.status(401).json({ message: 'Non autorise' })
-    const result = await pool.query('SELECT id, nom, poste, joined_at FROM beautycrm_employes WHERE admin_email=$1 AND revoked=false ORDER BY joined_at DESC', [admin_email])
+    const result = await pool.query('SELECT id, nom, poste, joined_at, vole, vole_code, vole_code_expiry FROM beautycrm_employes WHERE admin_email=$1 AND revoked=false ORDER BY joined_at DESC', [admin_email])
     res.json(result.rows)
   } catch (e) { res.status(500).json({ message: 'Erreur serveur' }) }
 })
