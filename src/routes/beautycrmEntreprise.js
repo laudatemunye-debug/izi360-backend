@@ -209,6 +209,58 @@ router.post('/revoke-employe', async (req, res) => {
   } catch (e) { res.status(500).json({ message: 'Erreur serveur' }) }
 })
 
+// 6d. Marquer un employe comme "vole/perdu" (genere un code de deverrouillage a transmettre manuellement)
+router.post('/marquer-vole', async (req, res) => {
+  try {
+    const { secret, admin_email, employe_id } = req.body
+    if (secret !== BEAUTYCRM_SECRET) return res.status(401).json({ message: 'Non autorise' })
+    if (!admin_email || !employe_id) return res.status(400).json({ message: 'Champs manquants' })
+
+    const code = genCode6()
+    const expiry = Date.now() + 48 * 60 * 60 * 1000 // 48h pour transmettre le code
+
+    const result = await pool.query(
+      'UPDATE beautycrm_employes SET vole=true, vole_code=$1, vole_code_expiry=$2 WHERE id=$3 AND admin_email=$4 RETURNING id',
+      [code, expiry, employe_id, admin_email]
+    )
+    if (result.rows.length === 0) return res.status(404).json({ message: 'Employe introuvable' })
+
+    res.json({ success: true, code, expiry })
+  } catch (e) {
+    console.error(e)
+    res.status(500).json({ message: 'Erreur serveur' })
+  }
+})
+
+// 6e. L'employe (ou la personne qui a le telephone) confirme son identite avec le code transmis par l'admin
+router.post('/verifier-vole', async (req, res) => {
+  try {
+    const { secret, admin_email, employe_id, code } = req.body
+    if (secret !== BEAUTYCRM_SECRET) return res.status(401).json({ message: 'Non autorise' })
+    if (!admin_email || !employe_id || !code) return res.status(400).json({ message: 'Champs manquants' })
+
+    const result = await pool.query(
+      'SELECT vole_code, vole_code_expiry FROM beautycrm_employes WHERE id=$1 AND admin_email=$2',
+      [employe_id, admin_email]
+    )
+    if (result.rows.length === 0) return res.status(404).json({ message: 'Employe introuvable' })
+
+    const row = result.rows[0]
+    if (!row.vole_code || row.vole_code_expiry < Date.now()) {
+      return res.status(400).json({ success: false, message: 'Code expire. Contactez l administrateur.' })
+    }
+    if (String(code).trim() !== row.vole_code) {
+      return res.status(400).json({ success: false, message: 'Code incorrect.' })
+    }
+
+    await pool.query('UPDATE beautycrm_employes SET vole=false, vole_code=NULL, vole_code_expiry=NULL WHERE id=$1', [employe_id])
+    res.json({ success: true })
+  } catch (e) {
+    console.error(e)
+    res.status(500).json({ message: 'Erreur serveur' })
+  }
+})
+
 // 6c. Liste des employes revoques (pour le menu "Anciens employes" de l'admin)
 router.post('/employes-revoques', async (req, res) => {
   try {
@@ -269,7 +321,7 @@ router.post('/check-status', async (req, res) => {
     if (secret !== BEAUTYCRM_SECRET) return res.status(401).json({ message: 'Non autorise' })
     if (!admin_email || !employe_id) return res.status(400).json({ message: 'Champs manquants' })
 
-    const result = await pool.query('SELECT revoked, motif_revocation FROM beautycrm_employes WHERE id=$1 AND admin_email=$2', [employe_id, admin_email])
+    const result = await pool.query('SELECT revoked, motif_revocation, vole, vole_code_expiry FROM beautycrm_employes WHERE id=$1 AND admin_email=$2', [employe_id, admin_email])
     const entRow = await pool.query('SELECT admin_whatsapp, fermee, motif_fermeture, devise, fact_nom, fact_adresse, fact_telephone, fact_email, fact_logo FROM beautycrm_entreprises WHERE admin_email=$1', [admin_email])
     const ent = entRow.rows[0] || {}
     const facture = { nom: ent.fact_nom || '', adresse: ent.fact_adresse || '', telephone: ent.fact_telephone || '', email: ent.fact_email || '', logo: ent.fact_logo || '' }
@@ -294,7 +346,11 @@ router.post('/check-status', async (req, res) => {
       })
     }
 
-    res.json({ revoked: result.rows[0].revoked === true, admin_whatsapp: ent.admin_whatsapp || null, motif: result.rows[0].motif_revocation || null, devise: ent.devise || null, facture })
+    if (result.rows[0].vole === true) {
+      return res.json({ revoked: false, vole: true, vole_expiry: result.rows[0].vole_code_expiry, admin_whatsapp: ent.admin_whatsapp || null, devise: ent.devise || null, facture })
+    }
+
+    res.json({ revoked: result.rows[0].revoked === true, vole: false, admin_whatsapp: ent.admin_whatsapp || null, motif: result.rows[0].motif_revocation || null, devise: ent.devise || null, facture })
   } catch (e) {
     console.error(e)
     res.status(500).json({ message: 'Erreur serveur' })
