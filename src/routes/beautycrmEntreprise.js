@@ -434,7 +434,7 @@ router.get('/admin/list', auth, async (req, res) => {
   try {
     if (req.user.role !== 'admin') return res.status(403).json({ message: 'Acces refuse' })
     const result = await pool.query(`
-      SELECT e.admin_email, e.fermee, e.suspendue, e.motif_suspension, e.created_at,
+      SELECT e.admin_email, e.fermee, e.suspendue, e.motif_suspension, e.supprimee, e.motif_suppression, e.deleted_at, e.created_at,
         (SELECT COUNT(*) FROM beautycrm_employes emp WHERE emp.admin_email = e.admin_email AND emp.revoked=false) as nb_employes
       FROM beautycrm_entreprises e ORDER BY e.created_at DESC
     `)
