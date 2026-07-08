@@ -158,9 +158,35 @@ router.post('/set-facture', async (req, res) => {
   }
 })
 
+router.post('/check-email', async (req, res) => {
+  try {
+    const { secret, email } = req.body
+    if (secret !== BEAUTYCRM_SECRET) return res.status(401).json({ message: 'Non autorise' })
+    if (!email) return res.status(400).json({ message: 'Email requis' })
+
+    const adminRow = await pool.query('SELECT admin_email FROM beautycrm_entreprises WHERE admin_email=$1', [email])
+    if (adminRow.rows.length > 0) {
+      return res.json({ found: true, role: 'admin', admin_email: email })
+    }
+
+    const empRow = await pool.query(
+      'SELECT admin_email, poste, id FROM beautycrm_employes WHERE email=$1 AND revoked=false AND vole=false ORDER BY joined_at DESC LIMIT 1',
+      [email]
+    )
+    if (empRow.rows.length > 0) {
+      return res.json({ found: true, role: 'employe', admin_email: empRow.rows[0].admin_email, poste: empRow.rows[0].poste, employe_id: empRow.rows[0].id })
+    }
+
+    return res.json({ found: false })
+  } catch (e) {
+    console.error(e)
+    res.status(500).json({ message: 'Erreur serveur' })
+  }
+})
+
 router.post('/join', async (req, res) => {
   try {
-    const { secret, code, nom, poste } = req.body
+    const { secret, code, nom, poste, email } = req.body
     if (secret !== BEAUTYCRM_SECRET) return res.status(401).json({ message: 'Non autorise' })
     if (!code || !nom || !poste) return res.status(400).json({ message: 'Champs manquants' })
 
@@ -184,11 +210,11 @@ router.post('/join', async (req, res) => {
     if (existingVole.rows.length > 0) {
       employeId = existingVole.rows[0].id
       await pool.query(
-        'UPDATE beautycrm_employes SET poste=$1, vole=false, vole_code=NULL, vole_code_expiry=NULL WHERE id=$2',
-        [poste, employeId]
+        'UPDATE beautycrm_employes SET poste=$1, vole=false, vole_code=NULL, vole_code_expiry=NULL, email=$2 WHERE id=$3',
+        [poste, email || null, employeId]
       )
     } else {
-      const inserted = await pool.query('INSERT INTO beautycrm_employes (admin_email, nom, poste) VALUES ($1,$2,$3) RETURNING id', [admin_email, nom, poste])
+      const inserted = await pool.query('INSERT INTO beautycrm_employes (admin_email, nom, poste, email) VALUES ($1,$2,$3,$4) RETURNING id', [admin_email, nom, poste, email || null])
       employeId = inserted.rows[0].id
     }
 
