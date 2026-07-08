@@ -3,7 +3,7 @@ const router = express.Router()
 const pool = require('../config/db')
 const auth = require('../middleware/auth')
 const { encrypt, decrypt } = require('../utils/cryptoServer')
-const { exchangeCodeForTokens, getAccessTokenFromRefresh, findFile, readFile, writeFile, revokeToken } = require('../utils/googleDrive')
+const { exchangeCodeForTokens, getAccessTokenFromRefresh, findFile, readFile, writeFile, revokeToken, deleteFile } = require('../utils/googleDrive')
 const transporter = require('../config/mailer')
 
 const SUPPORT_EMAIL = 'supportizi26@gmail.com'
@@ -308,11 +308,19 @@ router.post('/fermer-entreprise', async (req, res) => {
     const row = await pool.query('SELECT refresh_token_encrypted FROM beautycrm_entreprises WHERE admin_email=$1', [admin_email])
     const encrypted = row.rows[0]?.refresh_token_encrypted
     if (encrypted) {
-      const refreshToken = decrypt(encrypted)
-      await revokeToken(refreshToken)
+      try {
+        const refreshToken = decrypt(encrypted)
+        const accessToken = await getAccessTokenFromRefresh(refreshToken)
+        const existing = await findFile(accessToken, SHARED_FILE_NAME)
+        if (existing) await deleteFile(accessToken, existing.id)
+        await revokeToken(refreshToken)
+      } catch (e) {
+        console.error('Erreur purge Drive lors de la fermeture (on continue quand meme):', e.message)
+      }
     }
 
-    await pool.query('UPDATE beautycrm_entreprises SET fermee=true, motif_fermeture=$1, refresh_token_encrypted=NULL WHERE admin_email=$2', [motif || '', admin_email])
+    // Fermeture = suppression definitive et immediate (local + Drive + BDD), cascade sur les employes
+    await pool.query('DELETE FROM beautycrm_entreprises WHERE admin_email=$1', [admin_email])
 
     try {
       await transporter.sendMail({
@@ -322,8 +330,8 @@ router.post('/fermer-entreprise', async (req, res) => {
         html: `
           <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 32px;">
             <h1 style="color: #1D9E75;">IZI<span style="color: #111">360</span></h1>
-            <p>Le mode entreprise de votre compte BeautyCRM a ete ferme avec succes.</p>
-            <p>La connexion Google Drive associee a ete revoquee.</p>
+            <p>Le mode entreprise de votre compte BeautyCRM a ete ferme et supprime definitivement.</p>
+            <p>Toutes les donnees (locales et sur Google Drive) ont ete effacees. Cette action est irreversible.</p>
             ${motif ? `<p><strong>Motif :</strong> ${motif}</p>` : ''}
             <p>Vos employes ne pourront plus acceder aux donnees partagees de l'entreprise.</p>
             <p style="margin-top:24px; color:#888; font-size:13px;">L'equipe BeautyCRM © IZIsoft 2026</p>
@@ -451,6 +459,22 @@ router.post('/admin/suspend', auth, async (req, res) => {
   }
 })
 
+// Supprimer definitivement une entreprise (support izi360) — marque seulement pour l'instant,
+// la purge reelle (Drive + BDD) se fait quand l'admin clique "Fermer" via /purge-supprimee
+router.post('/admin/delete', auth, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ message: 'Acces refuse' })
+    const { admin_email, motif } = req.body
+    if (!admin_email) return res.status(400).json({ message: 'admin_email requis' })
+    const result = await pool.query('UPDATE beautycrm_entreprises SET supprimee=true, motif_suppression=$1, deleted_at=NOW() WHERE admin_email=$2 RETURNING id', [motif || '', admin_email])
+    if (result.rows.length === 0) return res.status(404).json({ message: 'Entreprise introuvable' })
+    res.json({ success: true })
+  } catch (e) {
+    console.error(e)
+    res.status(500).json({ message: 'Erreur serveur' })
+  }
+})
+
 // Reactiver une entreprise suspendue
 router.post('/admin/unsuspend', auth, async (req, res) => {
   try {
@@ -465,6 +489,40 @@ router.post('/admin/unsuspend', auth, async (req, res) => {
   }
 })
 
+// Purge definitive : appelee par l'app quand l'admin clique "Fermer" sur l'ecran "entreprise supprimee"
+// Supprime le fichier Drive, revoque le token Google, puis supprime la ligne BDD (cascade sur les employes)
+router.post('/purge-supprimee', async (req, res) => {
+  try {
+    const { secret, admin_email } = req.body
+    if (secret !== BEAUTYCRM_SECRET) return res.status(401).json({ message: 'Non autorise' })
+    if (!admin_email) return res.status(400).json({ message: 'admin_email requis' })
+
+    const row = await pool.query('SELECT supprimee, refresh_token_encrypted FROM beautycrm_entreprises WHERE admin_email=$1', [admin_email])
+    const ent = row.rows[0]
+    if (!ent) return res.json({ success: true }) // deja purgee
+    if (!ent.supprimee) return res.status(400).json({ message: 'Cette entreprise n est pas marquee comme supprimee' })
+
+    if (ent.refresh_token_encrypted) {
+      try {
+        const refreshToken = decrypt(ent.refresh_token_encrypted)
+        const accessToken = await getAccessTokenFromRefresh(refreshToken)
+        const existing = await findFile(accessToken, SHARED_FILE_NAME)
+        if (existing) await deleteFile(accessToken, existing.id)
+        await revokeToken(refreshToken)
+      } catch (e) {
+        console.error('Erreur purge Drive (on continue quand meme la purge BDD):', e.message)
+      }
+    }
+
+    await pool.query('DELETE FROM beautycrm_entreprises WHERE admin_email=$1', [admin_email])
+
+    res.json({ success: true })
+  } catch (e) {
+    console.error(e)
+    res.status(500).json({ message: 'Erreur serveur' })
+  }
+})
+
 // === STATUT consulte par l'app au demarrage (admin ET employe) ===
 router.post('/status', async (req, res) => {
   try {
@@ -472,9 +530,20 @@ router.post('/status', async (req, res) => {
     if (secret !== BEAUTYCRM_SECRET) return res.status(401).json({ message: 'Non autorise' })
     if (!admin_email) return res.status(400).json({ message: 'admin_email requis' })
 
-    const result = await pool.query('SELECT suspendue, motif_suspension, fermee, motif_fermeture, admin_whatsapp FROM beautycrm_entreprises WHERE admin_email=$1', [admin_email])
+    const result = await pool.query('SELECT suspendue, motif_suspension, fermee, motif_fermeture, admin_whatsapp, supprimee, motif_suppression FROM beautycrm_entreprises WHERE admin_email=$1', [admin_email])
     const ent = result.rows[0]
     if (!ent) return res.json({ blocked: false })
+
+    if (ent.supprimee) {
+      return res.json({
+        blocked: true,
+        reason: 'supprimee',
+        motif: ent.motif_suppression || null,
+        contact: role === 'admin'
+          ? { type: 'support', email: SUPPORT_EMAIL, whatsapp: SUPPORT_WHATSAPP }
+          : { type: 'entreprise', whatsapp: ent.admin_whatsapp || null },
+      })
+    }
 
     if (ent.suspendue) {
       notifierAdmin({

@@ -91,4 +91,14 @@ async function revokeToken(token) {
   }
 }
 
-module.exports = { exchangeCodeForTokens, getAccessTokenFromRefresh, findFile, readFile, writeFile, revokeToken }
+// Supprime definitivement un fichier Drive (purge lors de la suppression d'entreprise)
+async function deleteFile(accessToken, fileId) {
+  const res = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${accessToken}` },
+  })
+  if (!res.ok && res.status !== 404) throw new Error('Suppression fichier echouee: ' + res.status)
+  return true
+}
+
+module.exports = { exchangeCodeForTokens, getAccessTokenFromRefresh, findFile, readFile, writeFile, revokeToken, deleteFile }
