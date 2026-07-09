@@ -556,9 +556,10 @@ router.post('/status', async (req, res) => {
     if (secret !== BEAUTYCRM_SECRET) return res.status(401).json({ message: 'Non autorise' })
     if (!admin_email) return res.status(400).json({ message: 'admin_email requis' })
 
-    const result = await pool.query('SELECT suspendue, motif_suspension, fermee, motif_fermeture, admin_whatsapp, supprimee, motif_suppression FROM beautycrm_entreprises WHERE admin_email=$1', [admin_email])
+    const result = await pool.query('SELECT suspendue, motif_suspension, fermee, motif_fermeture, admin_whatsapp, supprimee, motif_suppression, devise, fact_nom, fact_adresse, fact_telephone, fact_email, fact_logo FROM beautycrm_entreprises WHERE admin_email=$1', [admin_email])
     const ent = result.rows[0]
     if (!ent) return res.json({ blocked: false })
+    const facture = { nom: ent.fact_nom || '', adresse: ent.fact_adresse || '', telephone: ent.fact_telephone || '', email: ent.fact_email || '', logo: ent.fact_logo || '' }
 
     if (ent.supprimee) {
       return res.json({
@@ -589,10 +590,10 @@ router.post('/status', async (req, res) => {
     }
 
     if (role === 'employe' && ent.fermee) {
-      return res.json({ blocked: true, reason: 'fermee', motif: ent.motif_fermeture || null, contact: { type: 'entreprise', whatsapp: ent.admin_whatsapp || null } })
+      return res.json({ blocked: true, reason: 'fermee', motif: ent.motif_fermeture || null, contact: { type: 'entreprise', whatsapp: ent.admin_whatsapp || null }, devise: ent.devise || null, facture })
     }
 
-    res.json({ blocked: false })
+    res.json({ blocked: false, devise: ent.devise || null, facture })
   } catch (e) {
     console.error(e)
     res.status(500).json({ message: 'Erreur serveur' })
