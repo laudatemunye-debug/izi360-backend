@@ -59,12 +59,33 @@ router.get('/oauth-start', (req, res) => {
   res.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`)
 })
 
-// 2. Google redirige ici apres consentement de l'admin
+// 1bis. Meme principe mais pour la sauvegarde personnelle (n'importe quel utilisateur, pas seulement admin entreprise)
+router.get('/oauth-start-personal', (req, res) => {
+  const { email } = req.query
+  if (!email) return res.status(400).send('email requis')
+  if (!isValidEmail(email)) return res.status(400).send('Email invalide')
+
+  const params = new URLSearchParams({
+    client_id: process.env.GOOGLE_CLIENT_ID,
+    redirect_uri: 'https://izi360-backend.vercel.app/api/beautycrm/entreprise/oauth-callback',
+    response_type: 'code',
+    access_type: 'offline',
+    prompt: 'consent',
+    scope: 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile',
+    state: 'personal:' + email,
+  })
+  res.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`)
+})
+
+// 2. Google redirige ici apres consentement (gere a la fois le flux entreprise et le flux personnel)
 router.get('/oauth-callback', async (req, res) => {
-  const { code, state: admin_email, error } = req.query
+  const { code, state, error } = req.query
   if (error) return res.send(`<h2>Connexion annulee</h2><p>${error}</p>`)
-  if (!code || !admin_email) return res.status(400).send('Parametres manquants')
-  if (!isValidEmail(admin_email)) return res.status(400).send('Email invalide')
+  if (!code || !state) return res.status(400).send('Parametres manquants')
+
+  const isPersonal = state.startsWith('personal:')
+  const emailUtilisateur = isPersonal ? state.slice('personal:'.length) : state
+  if (!isValidEmail(emailUtilisateur)) return res.status(400).send('Email invalide')
 
   try {
     const tokens = await exchangeCodeForTokens(code)
@@ -73,18 +94,27 @@ router.get('/oauth-callback', async (req, res) => {
     }
     const encrypted = encrypt(tokens.refresh_token)
 
-    await pool.query(`
-      INSERT INTO beautycrm_entreprises (admin_email, refresh_token_encrypted)
-      VALUES ($1, $2)
-      ON CONFLICT (admin_email) DO UPDATE SET refresh_token_encrypted = EXCLUDED.refresh_token_encrypted, updated_at = NOW()
-    `, [admin_email, encrypted])
+    if (isPersonal) {
+      await pool.query(`
+        INSERT INTO beautycrm_users_drive (email, refresh_token_encrypted)
+        VALUES ($1, $2)
+        ON CONFLICT (email) DO UPDATE SET refresh_token_encrypted = EXCLUDED.refresh_token_encrypted, updated_at = NOW()
+      `, [emailUtilisateur, encrypted])
+    } else {
+      await pool.query(`
+        INSERT INTO beautycrm_entreprises (admin_email, refresh_token_encrypted)
+        VALUES ($1, $2)
+        ON CONFLICT (admin_email) DO UPDATE SET refresh_token_encrypted = EXCLUDED.refresh_token_encrypted, updated_at = NOW()
+      `, [emailUtilisateur, encrypted])
+    }
 
+    const messageType = isPersonal ? 'izi360_personal_drive_connected' : 'izi360_drive_connected'
     res.send(`<html><body style="font-family:sans-serif;text-align:center;padding:60px;">
       <h2>✅ Connexion reussie</h2>
       <p>Cette fenetre va se fermer automatiquement...</p>
       <script>
         if (window.opener) {
-          window.opener.postMessage({ type: 'izi360_drive_connected', admin_email: '${admin_email}' }, '*');
+          window.opener.postMessage({ type: '${messageType}', email: '${emailUtilisateur}' }, '*');
         }
         setTimeout(function() { window.close(); }, 800);
       </script>
@@ -92,6 +122,40 @@ router.get('/oauth-callback', async (req, res) => {
   } catch (e) {
     console.error(e)
     res.status(500).send('<h2>Erreur serveur</h2><p>' + e.message + '</p>')
+  }
+})
+
+// 2bis. Le frontend appelle cette route a chaque fois qu'il a besoin d'un token d'acces Drive valide
+// (le refresh_token stocke cote serveur permet de ne jamais redemander de connexion a l'utilisateur)
+router.post('/drive-token-personal', async (req, res) => {
+  try {
+    const { secret, email } = req.body
+    if (secret !== BEAUTYCRM_SECRET) return res.status(401).json({ message: 'Non autorise' })
+    if (!email) return res.status(400).json({ message: 'email requis' })
+
+    const result = await pool.query('SELECT refresh_token_encrypted FROM beautycrm_users_drive WHERE email=$1', [email])
+    if (result.rows.length === 0) return res.status(404).json({ message: 'Aucune connexion Drive personnelle trouvee' })
+
+    const refreshToken = decrypt(result.rows[0].refresh_token_encrypted)
+    const accessToken = await getAccessTokenFromRefresh(refreshToken)
+    res.json({ access_token: accessToken })
+  } catch (e) {
+    console.error(e)
+    res.status(500).json({ message: e.message || 'Erreur serveur' })
+  }
+})
+
+// Verifie si un utilisateur a deja une connexion Drive personnelle active
+router.post('/drive-status-personal', async (req, res) => {
+  try {
+    const { secret, email } = req.body
+    if (secret !== BEAUTYCRM_SECRET) return res.status(401).json({ message: 'Non autorise' })
+    if (!email) return res.status(400).json({ message: 'email requis' })
+    const result = await pool.query('SELECT email FROM beautycrm_users_drive WHERE email=$1', [email])
+    res.json({ connected: result.rows.length > 0 })
+  } catch (e) {
+    console.error(e)
+    res.status(500).json({ message: 'Erreur serveur' })
   }
 })
 
@@ -160,17 +224,18 @@ router.post('/set-facture', async (req, res) => {
 
 router.post('/check-email', async (req, res) => {
   try {
-    const { secret, email } = req.body
+    const { secret, email: emailRaw } = req.body
     if (secret !== BEAUTYCRM_SECRET) return res.status(401).json({ message: 'Non autorise' })
-    if (!email) return res.status(400).json({ message: 'Email requis' })
+    if (!emailRaw) return res.status(400).json({ message: 'Email requis' })
+    const email = emailRaw.trim().toLowerCase()
 
-    const adminRow = await pool.query('SELECT admin_email FROM beautycrm_entreprises WHERE admin_email=$1', [email])
+    const adminRow = await pool.query('SELECT admin_email FROM beautycrm_entreprises WHERE LOWER(TRIM(admin_email))=$1', [email])
     if (adminRow.rows.length > 0) {
-      return res.json({ found: true, role: 'admin', admin_email: email })
+      return res.json({ found: true, role: 'admin', admin_email: adminRow.rows[0].admin_email })
     }
 
     const empRow = await pool.query(
-      'SELECT admin_email, poste, id FROM beautycrm_employes WHERE email=$1 AND revoked=false AND vole=false ORDER BY joined_at DESC LIMIT 1',
+      'SELECT admin_email, poste, id FROM beautycrm_employes WHERE LOWER(TRIM(email))=$1 AND revoked=false AND vole=false ORDER BY joined_at DESC LIMIT 1',
       [email]
     )
     if (empRow.rows.length > 0) {
