@@ -60,11 +60,8 @@ router.get('/oauth-start', (req, res) => {
 })
 
 // 1bis. Meme principe mais pour la sauvegarde personnelle (n'importe quel utilisateur, pas seulement admin entreprise)
+// L'email n'est pas requis en amont : il est decouvert apres consentement via l'API userinfo de Google.
 router.get('/oauth-start-personal', (req, res) => {
-  const { email } = req.query
-  if (!email) return res.status(400).send('email requis')
-  if (!isValidEmail(email)) return res.status(400).send('Email invalide')
-
   const params = new URLSearchParams({
     client_id: process.env.GOOGLE_CLIENT_ID,
     redirect_uri: 'https://izi360-backend.vercel.app/api/beautycrm/entreprise/oauth-callback',
@@ -72,7 +69,7 @@ router.get('/oauth-start-personal', (req, res) => {
     access_type: 'offline',
     prompt: 'consent',
     scope: 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile',
-    state: 'personal:' + email,
+    state: 'personal',
   })
   res.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`)
 })
@@ -83,9 +80,7 @@ router.get('/oauth-callback', async (req, res) => {
   if (error) return res.send(`<h2>Connexion annulee</h2><p>${error}</p>`)
   if (!code || !state) return res.status(400).send('Parametres manquants')
 
-  const isPersonal = state.startsWith('personal:')
-  const emailUtilisateur = isPersonal ? state.slice('personal:'.length) : state
-  if (!isValidEmail(emailUtilisateur)) return res.status(400).send('Email invalide')
+  const isPersonal = state === 'personal'
 
   try {
     const tokens = await exchangeCodeForTokens(code)
@@ -94,13 +89,25 @@ router.get('/oauth-callback', async (req, res) => {
     }
     const encrypted = encrypt(tokens.refresh_token)
 
+    let emailUtilisateur, nomUtilisateur, photoUtilisateur
     if (isPersonal) {
+      const infoRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+        headers: { Authorization: `Bearer ${tokens.access_token}` },
+      })
+      const info = await infoRes.json()
+      if (!info.email) return res.send('<h2>Erreur</h2><p>Impossible de recuperer votre email Google.</p>')
+      emailUtilisateur = info.email
+      nomUtilisateur = info.name || info.email
+      photoUtilisateur = info.picture || ''
+
       await pool.query(`
         INSERT INTO beautycrm_users_drive (email, refresh_token_encrypted)
         VALUES ($1, $2)
         ON CONFLICT (email) DO UPDATE SET refresh_token_encrypted = EXCLUDED.refresh_token_encrypted, updated_at = NOW()
       `, [emailUtilisateur, encrypted])
     } else {
+      emailUtilisateur = state
+      if (!isValidEmail(emailUtilisateur)) return res.status(400).send('Email invalide')
       await pool.query(`
         INSERT INTO beautycrm_entreprises (admin_email, refresh_token_encrypted)
         VALUES ($1, $2)
@@ -109,12 +116,15 @@ router.get('/oauth-callback', async (req, res) => {
     }
 
     const messageType = isPersonal ? 'izi360_personal_drive_connected' : 'izi360_drive_connected'
+    const payload = isPersonal
+      ? { type: messageType, email: emailUtilisateur, name: nomUtilisateur, picture: photoUtilisateur }
+      : { type: messageType, admin_email: emailUtilisateur }
     res.send(`<html><body style="font-family:sans-serif;text-align:center;padding:60px;">
       <h2>✅ Connexion reussie</h2>
       <p>Cette fenetre va se fermer automatiquement...</p>
       <script>
         if (window.opener) {
-          window.opener.postMessage({ type: '${messageType}', email: '${emailUtilisateur}' }, '*');
+          window.opener.postMessage(${JSON.stringify(payload)}, '*');
         }
         setTimeout(function() { window.close(); }, 800);
       </script>
