@@ -193,7 +193,8 @@ router.post('/generate-code', async (req, res) => {
     }
     const expiry = Date.now() + 15 * 60 * 1000
 
-    await pool.query('UPDATE beautycrm_entreprises SET code=$1, code_expiry=$2, code_used=false, updated_at=NOW() WHERE admin_email=$3', [code, expiry, admin_email])
+    const posteCode = req.body.poste || 'vendeur'
+    await pool.query('UPDATE beautycrm_entreprises SET code=$1, code_expiry=$2, code_used=false, code_poste=$3, updated_at=NOW() WHERE admin_email=$4', [code, expiry, posteCode, admin_email])
 
     res.json({ code, expiry })
   } catch (e) {
@@ -261,18 +262,19 @@ router.post('/check-email', async (req, res) => {
 
 router.post('/join', async (req, res) => {
   try {
-    const { secret, code, nom, poste, email } = req.body
+    const { secret, code, nom, email } = req.body
     if (secret !== BEAUTYCRM_SECRET) return res.status(401).json({ message: 'Non autorise' })
-    if (!code || !nom || !poste) return res.status(400).json({ message: 'Champs manquants' })
+    if (!code || !nom) return res.status(400).json({ message: 'Champs manquants' })
 
     const result = await pool.query(
-      'SELECT admin_email FROM beautycrm_entreprises WHERE code=$1 AND code_used=false AND code_expiry > $2',
+      'SELECT admin_email, code_poste FROM beautycrm_entreprises WHERE code=$1 AND code_used=false AND code_expiry > $2',
       [code, Date.now()]
     )
     if (result.rows.length === 0) {
       return res.status(400).json({ message: 'Code invalide ou expire' })
     }
     const admin_email = result.rows[0].admin_email
+    const poste = result.rows[0].code_poste || 'vendeur'
 
     await pool.query('UPDATE beautycrm_entreprises SET code_used=true WHERE admin_email=$1', [admin_email])
 
@@ -297,7 +299,7 @@ router.post('/join', async (req, res) => {
     const er = entRow.rows[0] || {}
 
     res.json({
-      success: true, admin_email, employe_id: employeId,
+      success: true, admin_email, employe_id: employeId, poste,
       admin_whatsapp: er.admin_whatsapp || null, devise: er.devise || null,
       facture: { nom: er.fact_nom || '', adresse: er.fact_adresse || '', telephone: er.fact_telephone || '', email: er.fact_email || '', logo: er.fact_logo || '' },
     })

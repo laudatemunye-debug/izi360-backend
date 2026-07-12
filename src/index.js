@@ -17,6 +17,10 @@ app.use((req, res, next) => {
 
 app.use(express.json())
 
+// Migration auto
+const pool = require('./config/db')
+pool.query("ALTER TABLE beautycrm_entreprises ADD COLUMN IF NOT EXISTS code_poste VARCHAR(30) DEFAULT 'vendeur'").catch(()=>{})
+
 app.get('/', (req, res) => res.json({ message: 'IZI360 API v1.0', status: 'ok' }))
 app.use('/api/auth', authRoutes)
 app.use('/api/admin', adminRoutes)
