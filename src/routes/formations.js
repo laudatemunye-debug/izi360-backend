@@ -46,11 +46,14 @@ async function ensureTables() {
       formation_id INTEGER REFERENCES formations(id) ON DELETE CASCADE,
       titre VARCHAR(255) NOT NULL,
       description TEXT,
-      url_video TEXT NOT NULL,
+      url_video TEXT,
+      type_contenu VARCHAR(20) DEFAULT 'video',
       ordre INTEGER DEFAULT 0,
       created_at TIMESTAMP DEFAULT NOW()
     )
   `)
+  await pool.query(`ALTER TABLE formation_videos ALTER COLUMN url_video DROP NOT NULL`).catch(()=>{})
+  await pool.query(`ALTER TABLE formation_videos ADD COLUMN IF NOT EXISTS type_contenu VARCHAR(20) DEFAULT 'video'`)
 }
 ensureTables().catch(err => console.error('Erreur creation tables formations:', err))
 
@@ -242,13 +245,14 @@ router.get('/:id/videos', async (req, res) => {
 router.post('/:id/videos', auth, async (req, res) => {
   try {
     if (req.user.role !== 'admin' && req.user.role !== 'formateur') return res.status(403).json({ message: 'Acces refuse' })
-    const { titre, description, urlVideo, ordre } = req.body
-    if (!titre || !urlVideo) return res.status(400).json({ message: 'Titre et URL de la video requis' })
+    const { titre, description, urlVideo, ordre, typeContenu } = req.body
+    if (!titre) return res.status(400).json({ message: 'Titre requis' })
+    if ((typeContenu || 'video') === 'video' && !urlVideo) return res.status(400).json({ message: 'URL de la video requise' })
 
     const result = await pool.query(
-      `INSERT INTO formation_videos (formation_id, titre, description, url_video, ordre)
-       VALUES ($1,$2,$3,$4,$5) RETURNING *`,
-      [req.params.id, titre, description || '', urlVideo, ordre || 0]
+      `INSERT INTO formation_videos (formation_id, titre, description, url_video, type_contenu, ordre)
+       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+      [req.params.id, titre, description || '', urlVideo || '', typeContenu || 'video', ordre || 0]
     )
     res.status(201).json(result.rows[0])
   } catch (err) {
@@ -261,11 +265,11 @@ router.post('/:id/videos', auth, async (req, res) => {
 router.patch('/:id/videos/:videoId', auth, async (req, res) => {
   try {
     if (req.user.role !== 'admin' && req.user.role !== 'formateur') return res.status(403).json({ message: 'Acces refuse' })
-    const { titre, description, urlVideo, ordre } = req.body
+    const { titre, description, urlVideo, ordre, typeContenu } = req.body
     const result = await pool.query(
-      `UPDATE formation_videos SET titre=COALESCE($1,titre), description=COALESCE($2,description), url_video=COALESCE($3,url_video), ordre=COALESCE($4,ordre)
-       WHERE id=$5 AND formation_id=$6 RETURNING *`,
-      [titre, description, urlVideo, ordre, req.params.videoId, req.params.id]
+      `UPDATE formation_videos SET titre=COALESCE($1,titre), description=COALESCE($2,description), url_video=COALESCE($3,url_video), type_contenu=COALESCE($4,type_contenu), ordre=COALESCE($5,ordre)
+       WHERE id=$6 AND formation_id=$7 RETURNING *`,
+      [titre, description, urlVideo, typeContenu, ordre, req.params.videoId, req.params.id]
     )
     if (result.rows.length === 0) return res.status(404).json({ message: 'Video introuvable' })
     res.json(result.rows[0])
