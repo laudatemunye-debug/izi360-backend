@@ -39,6 +39,18 @@ async function ensureTables() {
   await pool.query(`ALTER TABLE formation_inscriptions ADD COLUMN IF NOT EXISTS utilise_beautycrm VARCHAR(10)`)
   await pool.query(`ALTER TABLE formation_inscriptions ADD COLUMN IF NOT EXISTS version_beautycrm VARCHAR(50)`)
   await pool.query(`ALTER TABLE formation_inscriptions ADD COLUMN IF NOT EXISTS entendu_parler VARCHAR(10)`)
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS formation_videos (
+      id SERIAL PRIMARY KEY,
+      formation_id INTEGER REFERENCES formations(id) ON DELETE CASCADE,
+      titre VARCHAR(255) NOT NULL,
+      description TEXT,
+      url_video TEXT NOT NULL,
+      ordre INTEGER DEFAULT 0,
+      created_at TIMESTAMP DEFAULT NOW()
+    )
+  `)
 }
 ensureTables().catch(err => console.error('Erreur creation tables formations:', err))
 
@@ -207,6 +219,72 @@ router.delete('/:id/inscriptions/:inscritId', auth, async (req, res) => {
     )
     if (result.rows.length === 0) return res.status(404).json({ message: 'Inscrit introuvable' })
     res.json({ message: 'Inscrit supprime' })
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ message: 'Erreur serveur' })
+  }
+})
+
+// GET /api/formations/:id/videos - liste publique des videos d'une formation
+router.get('/:id/videos', async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT * FROM formation_videos WHERE formation_id=$1 ORDER BY ordre ASC, created_at ASC',
+      [req.params.id]
+    )
+    res.json(result.rows)
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur' })
+  }
+})
+
+// POST /api/formations/:id/videos - ajouter une video (admin/formateur)
+router.post('/:id/videos', auth, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin' && req.user.role !== 'formateur') return res.status(403).json({ message: 'Acces refuse' })
+    const { titre, description, urlVideo, ordre } = req.body
+    if (!titre || !urlVideo) return res.status(400).json({ message: 'Titre et URL de la video requis' })
+
+    const result = await pool.query(
+      `INSERT INTO formation_videos (formation_id, titre, description, url_video, ordre)
+       VALUES ($1,$2,$3,$4,$5) RETURNING *`,
+      [req.params.id, titre, description || '', urlVideo, ordre || 0]
+    )
+    res.status(201).json(result.rows[0])
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ message: 'Erreur serveur' })
+  }
+})
+
+// PATCH /api/formations/:id/videos/:videoId - modifier une video (admin/formateur)
+router.patch('/:id/videos/:videoId', auth, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin' && req.user.role !== 'formateur') return res.status(403).json({ message: 'Acces refuse' })
+    const { titre, description, urlVideo, ordre } = req.body
+    const result = await pool.query(
+      `UPDATE formation_videos SET titre=COALESCE($1,titre), description=COALESCE($2,description), url_video=COALESCE($3,url_video), ordre=COALESCE($4,ordre)
+       WHERE id=$5 AND formation_id=$6 RETURNING *`,
+      [titre, description, urlVideo, ordre, req.params.videoId, req.params.id]
+    )
+    if (result.rows.length === 0) return res.status(404).json({ message: 'Video introuvable' })
+    res.json(result.rows[0])
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ message: 'Erreur serveur' })
+  }
+})
+
+// DELETE /api/formations/:id/videos/:videoId - supprimer une video (admin/formateur)
+router.delete('/:id/videos/:videoId', auth, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin' && req.user.role !== 'formateur') return res.status(403).json({ message: 'Acces refuse' })
+    const result = await pool.query(
+      'DELETE FROM formation_videos WHERE id=$1 AND formation_id=$2 RETURNING id',
+      [req.params.videoId, req.params.id]
+    )
+    if (result.rows.length === 0) return res.status(404).json({ message: 'Video introuvable' })
+    res.json({ message: 'Video supprimee' })
   } catch (err) {
     console.error(err)
     res.status(500).json({ message: 'Erreur serveur' })
