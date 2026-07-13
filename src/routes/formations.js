@@ -54,6 +54,26 @@ async function ensureTables() {
   `)
   await pool.query(`ALTER TABLE formation_videos ALTER COLUMN url_video DROP NOT NULL`).catch(()=>{})
   await pool.query(`ALTER TABLE formation_videos ADD COLUMN IF NOT EXISTS type_contenu VARCHAR(20) DEFAULT 'video'`)
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS formation_contenu_likes (
+      id SERIAL PRIMARY KEY,
+      contenu_id INTEGER REFERENCES formation_videos(id) ON DELETE CASCADE,
+      visitor_id VARCHAR(100) NOT NULL,
+      created_at TIMESTAMP DEFAULT NOW(),
+      UNIQUE(contenu_id, visitor_id)
+    )
+  `)
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS formation_contenu_comments (
+      id SERIAL PRIMARY KEY,
+      contenu_id INTEGER REFERENCES formation_videos(id) ON DELETE CASCADE,
+      nom VARCHAR(255) NOT NULL,
+      texte TEXT NOT NULL,
+      created_at TIMESTAMP DEFAULT NOW()
+    )
+  `)
 }
 ensureTables().catch(err => console.error('Erreur creation tables formations:', err))
 
@@ -291,6 +311,130 @@ router.delete('/:id/videos/:videoId', auth, async (req, res) => {
     res.json({ message: 'Video supprimee' })
   } catch (err) {
     console.error(err)
+    res.status(500).json({ message: 'Erreur serveur' })
+  }
+})
+
+// GET /api/formations/:id/videos/:videoId/likes?visitorId=xxx - compte + statut du visiteur
+router.get('/:id/videos/:videoId/likes', async (req, res) => {
+  try {
+    const { visitorId } = req.query
+    const countRes = await pool.query('SELECT COUNT(*)::int as count FROM formation_contenu_likes WHERE contenu_id=$1', [req.params.videoId])
+    let liked = false
+    if (visitorId) {
+      const likedRes = await pool.query('SELECT id FROM formation_contenu_likes WHERE contenu_id=$1 AND visitor_id=$2', [req.params.videoId, visitorId])
+      liked = likedRes.rows.length > 0
+    }
+    res.json({ count: countRes.rows[0].count, liked })
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur' })
+  }
+})
+
+// POST /api/formations/:id/videos/:videoId/likes - toggle like (body: visitorId)
+router.post('/:id/videos/:videoId/likes', async (req, res) => {
+  try {
+    const { visitorId } = req.body
+    if (!visitorId) return res.status(400).json({ message: 'visitorId requis' })
+
+    const existing = await pool.query('SELECT id FROM formation_contenu_likes WHERE contenu_id=$1 AND visitor_id=$2', [req.params.videoId, visitorId])
+    let liked
+    if (existing.rows.length > 0) {
+      await pool.query('DELETE FROM formation_contenu_likes WHERE id=$1', [existing.rows[0].id])
+      liked = false
+    } else {
+      await pool.query('INSERT INTO formation_contenu_likes (contenu_id, visitor_id) VALUES ($1,$2)', [req.params.videoId, visitorId])
+      liked = true
+    }
+    const countRes = await pool.query('SELECT COUNT(*)::int as count FROM formation_contenu_likes WHERE contenu_id=$1', [req.params.videoId])
+    res.json({ count: countRes.rows[0].count, liked })
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ message: 'Erreur serveur' })
+  }
+})
+
+// GET /api/formations/:id/videos/:videoId/comments - liste des commentaires
+router.get('/:id/videos/:videoId/comments', async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT * FROM formation_contenu_comments WHERE contenu_id=$1 ORDER BY created_at DESC',
+      [req.params.videoId]
+    )
+    res.json(result.rows)
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur' })
+  }
+})
+
+// POST /api/formations/:id/videos/:videoId/comments - ajouter un commentaire (public)
+router.post('/:id/videos/:videoId/comments', async (req, res) => {
+  try {
+    const { nom, texte } = req.body
+    if (!nom || !nom.trim() || !texte || !texte.trim()) return res.status(400).json({ message: 'Nom et commentaire requis' })
+
+    const result = await pool.query(
+      `INSERT INTO formation_contenu_comments (contenu_id, nom, texte) VALUES ($1,$2,$3) RETURNING *`,
+      [req.params.videoId, nom.trim(), texte.trim()]
+    )
+    res.status(201).json(result.rows[0])
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ message: 'Erreur serveur' })
+  }
+})
+
+// DELETE /api/formations/:id/videos/:videoId/comments/:commentId - moderation (admin/formateur)
+router.delete('/:id/videos/:videoId/comments/:commentId', auth, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin' && req.user.role !== 'formateur') return res.status(403).json({ message: 'Acces refuse' })
+    const result = await pool.query(
+      'DELETE FROM formation_contenu_comments WHERE id=$1 AND contenu_id=$2 RETURNING id',
+      [req.params.commentId, req.params.videoId]
+    )
+    if (result.rows.length === 0) return res.status(404).json({ message: 'Commentaire introuvable' })
+    res.json({ message: 'Commentaire supprime' })
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur' })
+  }
+})
+
+
+router.post('/:id/videos/:videoId/likes', async (req, res) => {
+  const { visiteurId } = req.body
+  if (!visiteurId) return res.status(400).json({ message: 'visiteurId requis' })
+  try {
+    const existing = await pool.query(
+      'SELECT id FROM formation_contenu_likes WHERE contenu_id=$1 AND visiteur_id=$2',
+      [req.params.videoId, visiteurId]
+    )
+    if (existing.rows.length > 0) {
+      await pool.query('DELETE FROM formation_contenu_likes WHERE id=$1', [existing.rows[0].id])
+      const count = await pool.query('SELECT COUNT(*) FROM formation_contenu_likes WHERE contenu_id=$1', [req.params.videoId])
+      return res.json({ liked: false, count: parseInt(count.rows[0].count) })
+    }
+    await pool.query('INSERT INTO formation_contenu_likes (contenu_id, visiteur_id) VALUES ($1,$2)', [req.params.videoId, visiteurId])
+    const count = await pool.query('SELECT COUNT(*) FROM formation_contenu_likes WHERE contenu_id=$1', [req.params.videoId])
+    res.json({ liked: true, count: parseInt(count.rows[0].count) })
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur' })
+  }
+})
+
+router.get('/:id/videos/:videoId/likes', async (req, res) => {
+  const { visiteurId } = req.query
+  try {
+    const count = await pool.query('SELECT COUNT(*) FROM formation_contenu_likes WHERE contenu_id=$1', [req.params.videoId])
+    let liked = false
+    if (visiteurId) {
+      const existing = await pool.query(
+        'SELECT id FROM formation_contenu_likes WHERE contenu_id=$1 AND visiteur_id=$2',
+        [req.params.videoId, visiteurId]
+      )
+      liked = existing.rows.length > 0
+    }
+    res.json({ count: parseInt(count.rows[0].count), liked })
+  } catch (err) {
     res.status(500).json({ message: 'Erreur serveur' })
   }
 })
