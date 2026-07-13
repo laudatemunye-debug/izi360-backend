@@ -2,6 +2,13 @@ const express = require('express')
 const router = express.Router()
 const pool = require('../config/db')
 const auth = require('../middleware/auth')
+const rateLimit = require('express-rate-limit')
+
+const publicLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  message: { message: 'Trop de requêtes, réessayez plus tard' }
+})
 
 async function ensureTables() {
   await pool.query(`
@@ -176,7 +183,7 @@ router.patch('/:id', auth, async (req, res) => {
 })
 
 // POST /api/formations/:id/inscriptions - inscription publique
-router.post('/:id/inscriptions', async (req, res) => {
+router.post('/:id/inscriptions', publicLimiter, async (req, res) => {
   try {
     const { nom, telephone, email, ville, pays, domaine, utilise_beautycrm, version_beautycrm, entendu_parler } = req.body
     if (!nom || !telephone) return res.status(400).json({ message: 'Nom et telephone requis' })
@@ -332,7 +339,7 @@ router.get('/:id/videos/:videoId/likes', async (req, res) => {
 })
 
 // POST /api/formations/:id/videos/:videoId/likes - toggle like (body: visiteurId)
-router.post('/:id/videos/:videoId/likes', async (req, res) => {
+router.post('/:id/videos/:videoId/likes', publicLimiter, async (req, res) => {
   try {
     const { visiteurId } = req.body
     if (!visiteurId) return res.status(400).json({ message: 'visiteurId requis' })
@@ -368,7 +375,7 @@ router.get('/:id/videos/:videoId/comments', async (req, res) => {
 })
 
 // POST /api/formations/:id/videos/:videoId/comments - ajouter un commentaire (public)
-router.post('/:id/videos/:videoId/comments', async (req, res) => {
+router.post('/:id/videos/:videoId/comments', publicLimiter, async (req, res) => {
   try {
     const { nom, texte } = req.body
     if (!texte || !texte.trim()) return res.status(400).json({ message: 'Commentaire requis' })
