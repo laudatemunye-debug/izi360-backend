@@ -26,9 +26,19 @@ async function ensureTables() {
       telephone VARCHAR(50),
       email VARCHAR(255),
       ville VARCHAR(255),
+      pays VARCHAR(100),
+      domaine VARCHAR(255),
+      utilise_beautycrm VARCHAR(10),
+      version_beautycrm VARCHAR(50),
+      entendu_parler VARCHAR(10),
       created_at TIMESTAMP DEFAULT NOW()
     )
   `)
+  await pool.query(`ALTER TABLE formation_inscriptions ADD COLUMN IF NOT EXISTS pays VARCHAR(100)`)
+  await pool.query(`ALTER TABLE formation_inscriptions ADD COLUMN IF NOT EXISTS domaine VARCHAR(255)`)
+  await pool.query(`ALTER TABLE formation_inscriptions ADD COLUMN IF NOT EXISTS utilise_beautycrm VARCHAR(10)`)
+  await pool.query(`ALTER TABLE formation_inscriptions ADD COLUMN IF NOT EXISTS version_beautycrm VARCHAR(50)`)
+  await pool.query(`ALTER TABLE formation_inscriptions ADD COLUMN IF NOT EXISTS entendu_parler VARCHAR(10)`)
 }
 ensureTables().catch(err => console.error('Erreur creation tables formations:', err))
 
@@ -71,7 +81,13 @@ router.get('/all', auth, async (req, res) => {
 // GET /api/formations/slug/:slug - detail public par slug
 router.get('/slug/:slug', async (req, res) => {
   try {
-    const result = await pool.query('SELECT * FROM formations WHERE slug=$1 AND actif=true', [req.params.slug])
+    const result = await pool.query(`
+      SELECT f.*, COUNT(i.id)::int as nb_inscrits
+      FROM formations f
+      LEFT JOIN formation_inscriptions i ON i.formation_id = f.id
+      WHERE f.slug=$1 AND f.actif=true
+      GROUP BY f.id
+    `, [req.params.slug])
     if (result.rows.length === 0) return res.status(404).json({ message: 'Formation introuvable' })
     res.json(result.rows[0])
   } catch (err) {
@@ -127,7 +143,7 @@ router.patch('/:id', auth, async (req, res) => {
 // POST /api/formations/:id/inscriptions - inscription publique
 router.post('/:id/inscriptions', async (req, res) => {
   try {
-    const { nom, telephone, email, ville } = req.body
+    const { nom, telephone, email, ville, pays, domaine, utilise_beautycrm, version_beautycrm, entendu_parler } = req.body
     if (!nom || !telephone) return res.status(400).json({ message: 'Nom et telephone requis' })
 
     const formation = await pool.query('SELECT id FROM formations WHERE id=$1', [req.params.id])
@@ -142,9 +158,9 @@ router.post('/:id/inscriptions', async (req, res) => {
     }
 
     const result = await pool.query(
-      `INSERT INTO formation_inscriptions (formation_id, nom, telephone, email, ville)
-       VALUES ($1,$2,$3,$4,$5) RETURNING *`,
-      [req.params.id, nom, telephone, email || '', ville || '']
+      `INSERT INTO formation_inscriptions (formation_id, nom, telephone, email, ville, pays, domaine, utilise_beautycrm, version_beautycrm, entendu_parler)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+      [req.params.id, nom, telephone, email || '', ville || '', pays || '', domaine || '', utilise_beautycrm || '', version_beautycrm || '', entendu_parler || '']
     )
     res.status(201).json(result.rows[0])
   } catch (err) {
