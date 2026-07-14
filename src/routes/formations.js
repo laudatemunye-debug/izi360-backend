@@ -2,6 +2,8 @@ const express = require('express')
 const router = express.Router()
 const pool = require('../config/db')
 const auth = require('../middleware/auth')
+const { Resend } = require('resend')
+const resend = new Resend(process.env.RESEND_API_KEY)
 const rateLimit = require('express-rate-limit')
 
 const publicLimiter = rateLimit({
@@ -204,7 +206,17 @@ router.post('/:id/inscriptions', publicLimiter, async (req, res) => {
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
       [req.params.id, nom, telephone, email || '', ville || '', pays || '', domaine || '', utilise_beautycrm || '', version_beautycrm || '', entendu_parler || '']
     )
-    res.status(201).json(result.rows[0])
+    const inscrit = result.rows[0]
+
+    // Envoyer email si email fourni
+    if (email) {
+      const formationData = await pool.query('SELECT * FROM formations WHERE id=$1', [req.params.id])
+      if (formationData.rows.length > 0) {
+        envoyerEmailConfirmation(inscrit, formationData.rows[0])
+      }
+    }
+
+    res.status(201).json(inscrit)
   } catch (err) {
     console.error(err)
     res.status(500).json({ message: 'Erreur serveur' })
@@ -406,4 +418,102 @@ router.delete('/:id/videos/:videoId/comments/:commentId', auth, async (req, res)
   }
 })
 
+async function envoyerEmailConfirmation(inscrit, formation) {
+  try {
+    const dateDebut = formation.date_debut
+      ? new Date(formation.date_debut).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })
+      : 'Date à confirmer'
+
+    await resend.emails.send({
+      from: 'BeautyCRM <onboarding@resend.dev>',
+      to: inscrit.email,
+      subject: `✅ Inscription confirmée — ${formation.titre}`,
+      html: `
+<!DOCTYPE html>
+<html lang="fr">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
+<body style="margin:0;padding:0;background:#F5F6FA;font-family:Arial,sans-serif;">
+  <div style="max-width:600px;margin:40px auto;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08);">
+    
+    <!-- Header -->
+    <div style="background:#3D5AFE;padding:32px 40px;text-align:center;">
+      <div style="font-size:28px;font-weight:900;color:#fff;letter-spacing:-0.5px;">BeautyCRM</div>
+      <div style="color:rgba(255,255,255,0.8);font-size:13px;margin-top:4px;">par IZIsoft</div>
+    </div>
+
+    <!-- Body -->
+    <div style="padding:40px;">
+      <div style="font-size:22px;font-weight:700;color:#1A1F36;margin-bottom:8px;">
+        Bonjour ${inscrit.nom} 👋
+      </div>
+      <p style="color:#6B7280;font-size:15px;line-height:1.7;margin-top:0;">
+        Votre inscription a bien été enregistrée. Nous sommes ravis de vous compter parmi nous !
+      </p>
+
+      <!-- Détails formation -->
+      <div style="background:#F5F6FA;border-radius:12px;padding:24px;margin:24px 0;border-left:4px solid #3D5AFE;">
+        <div style="font-size:13px;color:#3D5AFE;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:12px;">
+          Détails de la formation
+        </div>
+        <div style="font-size:18px;font-weight:700;color:#1A1F36;margin-bottom:16px;">${formation.titre}</div>
+        <table style="width:100%;border-collapse:collapse;">
+          <tr>
+            <td style="padding:6px 0;color:#6B7280;font-size:14px;width:40%;">📅 Date</td>
+            <td style="padding:6px 0;color:#1A1F36;font-size:14px;font-weight:600;">${dateDebut}</td>
+          </tr>
+          ${formation.lieu ? `<tr>
+            <td style="padding:6px 0;color:#6B7280;font-size:14px;">📍 Lieu</td>
+            <td style="padding:6px 0;color:#1A1F36;font-size:14px;font-weight:600;">${formation.lieu}</td>
+          </tr>` : ''}
+          ${formation.duree ? `<tr>
+            <td style="padding:6px 0;color:#6B7280;font-size:14px;">⏱ Durée</td>
+            <td style="padding:6px 0;color:#1A1F36;font-size:14px;font-weight:600;">${formation.duree}</td>
+          </tr>` : ''}
+          ${formation.formateur ? `<tr>
+            <td style="padding:6px 0;color:#6B7280;font-size:14px;">👤 Formateur</td>
+            <td style="padding:6px 0;color:#1A1F36;font-size:14px;font-weight:600;">${formation.formateur}</td>
+          </tr>` : ''}
+        </table>
+      </div>
+
+      <!-- Vos infos -->
+      <div style="background:#EEF0FF;border-radius:12px;padding:20px;margin-bottom:24px;">
+        <div style="font-size:13px;color:#3D5AFE;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;">
+          Vos informations
+        </div>
+        <div style="font-size:14px;color:#1A1F36;">
+          <strong>Nom :</strong> ${inscrit.nom}<br>
+          <strong>Téléphone :</strong> ${inscrit.telephone}<br>
+          ${inscrit.ville ? `<strong>Ville :</strong> ${inscrit.ville}` : ''}
+        </div>
+      </div>
+
+      <p style="color:#6B7280;font-size:14px;line-height:1.7;">
+        Nous vous contacterons sur WhatsApp au <strong style="color:#1A1F36;">${inscrit.telephone}</strong> avec tous les détails pratiques avant la formation.
+      </p>
+
+      <!-- CTA -->
+      <div style="text-align:center;margin:32px 0;">
+        <a href="https://beautycrm-web.vercel.app?ref=FORMATION" 
+           style="display:inline-block;padding:14px 32px;background:#3D5AFE;color:#fff;text-decoration:none;border-radius:10px;font-weight:700;font-size:15px;">
+          Télécharger BeautyCRM gratuitement
+        </a>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <div style="background:#F5F6FA;padding:24px 40px;text-align:center;border-top:1px solid #E8EAF0;">
+      <div style="color:#9CA3AF;font-size:12px;">
+        BeautyCRM · IZIsoft © 2026 · Tous droits réservés.<br>
+        Cet email vous a été envoyé suite à votre inscription à la formation.
+      </div>
+    </div>
+  </div>
+</body>
+</html>`
+    })
+  } catch (err) {
+    console.error('Erreur envoi email confirmation:', err)
+  }
+}
 module.exports = router
