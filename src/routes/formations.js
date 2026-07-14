@@ -3,6 +3,7 @@ const router = express.Router()
 const pool = require('../config/db')
 const auth = require('../middleware/auth')
 const transporter = require('../config/mailer')
+const { envoyerWhatsApp } = require('../utils/whatsapp')
 const rateLimit = require('express-rate-limit')
 
 const publicLimiter = rateLimit({
@@ -207,12 +208,38 @@ router.post('/:id/inscriptions', publicLimiter, async (req, res) => {
     )
     const inscrit = result.rows[0]
 
+    // Recuperer les infos de la formation (utilise pour WhatsApp et email)
+    const formationData = await pool.query('SELECT * FROM formations WHERE id=$1', [req.params.id])
+    const formationInfo = formationData.rows[0]
+
+    // Envoyer message WhatsApp de bienvenue
+    if (formationInfo) {
+      const dateTexte = formationInfo.date_debut
+        ? new Date(formationInfo.date_debut).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })
+        : 'Date a confirmer'
+      const appUrl = process.env.APP_DOWNLOAD_URL || ''
+
+      const messageWhatsApp = `Bonjour ${inscrit.nom} ! 🎉
+
+Votre inscription a la formation *${formationInfo.titre}* a bien été enregistrée.
+
+📅 Date : ${dateTexte}
+📍 Lieu : ${formationInfo.lieu || 'a confirmer'}
+⏱️ Durée : ${formationInfo.duree || 'a confirmer'}
+
+📲 Pensez a telecharger l'application BeautyCRM si ce n'est pas deja fait :
+${appUrl}
+
+Nous reviendrons vers vous très bientôt avec tous les détails pratiques.
+
+— L'équipe IZI360`
+
+      envoyerWhatsApp(inscrit.telephone, messageWhatsApp).catch(err => console.error('WhatsApp erreur:', err))
+    }
+
     // Envoyer email si email fourni
-    if (email) {
-      const formationData = await pool.query('SELECT * FROM formations WHERE id=$1', [req.params.id])
-      if (formationData.rows.length > 0) {
-        envoyerEmailConfirmation(inscrit, formationData.rows[0]).catch(err => console.error('Email erreur:', err))
-      }
+    if (email && formationInfo) {
+      envoyerEmailConfirmation(inscrit, formationInfo).catch(err => console.error('Email erreur:', err))
     }
 
     res.status(201).json(inscrit)
