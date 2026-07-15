@@ -11,7 +11,7 @@ async function envoyerWhatsApp(telephone, message) {
           Authorization: `Bearer ${process.env.WHATSAPP_SECRET}`,
           'Content-Type': 'application/json'
         },
-        timeout: 10000
+        timeout: 20000
       }
     )
     console.log('WhatsApp envoye a', numero)
