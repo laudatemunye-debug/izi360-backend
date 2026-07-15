@@ -13,7 +13,6 @@ const publicLimiter = rateLimit({
   keyGenerator: (req) => req.ip,
   validate: { trustProxy: false }
 })
-
 async function ensureTables() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS formations (
@@ -98,7 +97,6 @@ router.get('/', async (req, res) => {
   }
 })
 
-
 // GET /api/formations/all - liste complete (admin: toutes, formateur: la sienne)
 router.get('/all', auth, async (req, res) => {
   try {
@@ -125,7 +123,6 @@ router.get('/all', auth, async (req, res) => {
   }
 })
 
-
 // GET /api/formations/slug/:slug - detail public par slug
 router.get('/slug/:slug', async (req, res) => {
   try {
@@ -143,7 +140,6 @@ router.get('/slug/:slug', async (req, res) => {
   }
 })
 
-
 // GET /api/formations/:id - detail public par id
 router.get('/:id', async (req, res) => {
   try {
@@ -154,7 +150,6 @@ router.get('/:id', async (req, res) => {
     res.status(500).json({ message: 'Erreur serveur' })
   }
 })
-
 
 // POST /api/formations - creer une formation (admin)
 router.post('/', auth, async (req, res) => {
@@ -178,7 +173,6 @@ router.post('/', auth, async (req, res) => {
   }
 })
 
-
 // PATCH /api/formations/:id - activer/desactiver (admin)
 router.patch('/:id', auth, async (req, res) => {
   try {
@@ -190,7 +184,6 @@ router.patch('/:id', auth, async (req, res) => {
     res.status(500).json({ message: 'Erreur serveur' })
   }
 })
-
 
 // POST /api/formations/:id/inscriptions - inscription publique
 router.post('/:id/inscriptions', publicLimiter, async (req, res) => {
@@ -257,7 +250,6 @@ Nous reviendrons vers vous très bientôt avec tous les détails pratiques.
   }
 })
 
-
 // GET /api/formations/:id/inscriptions - liste des inscrits (admin: toutes, formateur: la sienne)
 router.get('/:id/inscriptions', auth, async (req, res) => {
   try {
@@ -278,7 +270,6 @@ router.get('/:id/inscriptions', auth, async (req, res) => {
     res.status(500).json({ message: 'Erreur serveur' })
   }
 })
-
 
 // DELETE /api/formations/:id/inscriptions/:inscritId - supprimer un inscrit (admin: toutes, formateur: la sienne)
 router.delete('/:id/inscriptions/:inscritId', auth, async (req, res) => {
@@ -303,7 +294,6 @@ router.delete('/:id/inscriptions/:inscritId', auth, async (req, res) => {
   }
 })
 
-
 // GET /api/formations/:id/videos - liste publique des videos d'une formation
 router.get('/:id/videos', async (req, res) => {
   try {
@@ -316,7 +306,6 @@ router.get('/:id/videos', async (req, res) => {
     res.status(500).json({ message: 'Erreur serveur' })
   }
 })
-
 
 // POST /api/formations/:id/videos - ajouter une video (admin/formateur)
 router.post('/:id/videos', auth, async (req, res) => {
@@ -338,7 +327,6 @@ router.post('/:id/videos', auth, async (req, res) => {
   }
 })
 
-
 // PATCH /api/formations/:id/videos/:videoId - modifier une video (admin/formateur)
 router.patch('/:id/videos/:videoId', auth, async (req, res) => {
   try {
@@ -357,7 +345,6 @@ router.patch('/:id/videos/:videoId', auth, async (req, res) => {
   }
 })
 
-
 // DELETE /api/formations/:id/videos/:videoId - supprimer une video (admin/formateur)
 router.delete('/:id/videos/:videoId', auth, async (req, res) => {
   try {
@@ -374,7 +361,6 @@ router.delete('/:id/videos/:videoId', auth, async (req, res) => {
   }
 })
 
-
 // GET /api/formations/:id/videos/:videoId/likes?visiteurId=xxx - compte + statut du visiteur
 router.get('/:id/videos/:videoId/likes', async (req, res) => {
   try {
@@ -390,7 +376,6 @@ router.get('/:id/videos/:videoId/likes', async (req, res) => {
     res.status(500).json({ message: 'Erreur serveur' })
   }
 })
-
 
 // POST /api/formations/:id/videos/:videoId/likes - toggle like (body: visiteurId)
 router.post('/:id/videos/:videoId/likes', publicLimiter, async (req, res) => {
@@ -415,7 +400,6 @@ router.post('/:id/videos/:videoId/likes', publicLimiter, async (req, res) => {
   }
 })
 
-
 // GET /api/formations/:id/videos/:videoId/comments - liste des commentaires
 router.get('/:id/videos/:videoId/comments', async (req, res) => {
   try {
@@ -428,7 +412,6 @@ router.get('/:id/videos/:videoId/comments', async (req, res) => {
     res.status(500).json({ message: 'Erreur serveur' })
   }
 })
-
 
 // POST /api/formations/:id/videos/:videoId/comments - ajouter un commentaire (public)
 router.post('/:id/videos/:videoId/comments', publicLimiter, async (req, res) => {
@@ -447,7 +430,6 @@ router.post('/:id/videos/:videoId/comments', publicLimiter, async (req, res) => 
   }
 })
 
-
 // DELETE /api/formations/:id/videos/:videoId/comments/:commentId - moderation (admin/formateur)
 router.delete('/:id/videos/:videoId/comments/:commentId', auth, async (req, res) => {
   try {
@@ -462,7 +444,6 @@ router.delete('/:id/videos/:videoId/comments/:commentId', auth, async (req, res)
     res.status(500).json({ message: 'Erreur serveur' })
   }
 })
-
 
 async function envoyerEmailConfirmation(inscrit, formation) {
   const dateDebut = formation.date_debut
