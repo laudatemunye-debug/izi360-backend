@@ -29,6 +29,7 @@ app.use('/api/beautycrm', require('./routes/beautycrm'))
 app.use('/api/beautycrm/entreprise', require('./routes/beautycrmEntreprise'))
 app.use('/api/brevets', require('./routes/brevets'))
 app.use('/api/formations', require('./routes/formations'))
+app.use('/api/cron', require('./routes/cron'))
 app.use('/api/formateurs', require('./routes/formateurs'))
 
 if (process.env.NODE_ENV !== 'production') {
