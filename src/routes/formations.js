@@ -26,9 +26,13 @@ async function ensureTables() {
       date_debut DATE,
       formateur VARCHAR(255),
       actif BOOLEAN DEFAULT true,
-      created_at TIMESTAMP DEFAULT NOW()
+      created_at TIMESTAMP DEFAULT NOW(),
+      heure_debut VARCHAR(5),
+      fuseau_horaire VARCHAR(50) DEFAULT 'Africa/Lubumbashi'
     )
   `)
+  await pool.query(`ALTER TABLE formations ADD COLUMN IF NOT EXISTS heure_debut VARCHAR(5)`)
+  await pool.query(`ALTER TABLE formations ADD COLUMN IF NOT EXISTS fuseau_horaire VARCHAR(50) DEFAULT 'Africa/Lubumbashi'`)
   await pool.query(`
     CREATE TABLE IF NOT EXISTS formation_inscriptions (
       id SERIAL PRIMARY KEY,
@@ -160,16 +164,16 @@ router.get('/:id', async (req, res) => {
 router.post('/', auth, async (req, res) => {
   try {
     if (req.user.role !== 'admin') return res.status(403).json({ message: 'Acces refuse' })
-    const { slug, titre, description, lieu, duree, dateDebut, formateur } = req.body
+    const { slug, titre, description, lieu, duree, dateDebut, heureDebut, fuseauHoraire, formateur } = req.body
     if (!slug || !titre) return res.status(400).json({ message: 'Slug et titre requis' })
 
     const exists = await pool.query('SELECT id FROM formations WHERE slug=$1', [slug])
     if (exists.rows.length > 0) return res.status(400).json({ message: 'Ce slug existe deja' })
 
     const result = await pool.query(
-      `INSERT INTO formations (slug, titre, description, lieu, duree, date_debut, formateur)
-       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
-      [slug, titre, description || '', lieu || '', duree || '', dateDebut || null, formateur || '']
+      `INSERT INTO formations (slug, titre, description, lieu, duree, date_debut, heure_debut, fuseau_horaire, formateur)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+      [slug, titre, description || '', lieu || '', duree || '', dateDebut || null, heureDebut || null, fuseauHoraire || 'Africa/Lubumbashi', formateur || '']
     )
     res.status(201).json(result.rows[0])
   } catch (err) {
@@ -179,14 +183,37 @@ router.post('/', auth, async (req, res) => {
 })
 
 
-// PATCH /api/formations/:id - activer/desactiver (admin)
+// PATCH /api/formations/:id - modifier ou activer/desactiver (admin)
 router.patch('/:id', auth, async (req, res) => {
   try {
     if (req.user.role !== 'admin') return res.status(403).json({ message: 'Acces refuse' })
-    const { actif } = req.body
-    const result = await pool.query('UPDATE formations SET actif=$1 WHERE id=$2 RETURNING *', [actif, req.params.id])
+    const { actif, titre, description, lieu, duree, dateDebut, heureDebut, fuseauHoraire, formateur } = req.body
+
+    const current = await pool.query('SELECT * FROM formations WHERE id=$1', [req.params.id])
+    if (current.rows.length === 0) return res.status(404).json({ message: 'Formation introuvable' })
+    const f = current.rows[0]
+
+    const result = await pool.query(
+      `UPDATE formations SET
+        actif=$1, titre=$2, description=$3, lieu=$4, duree=$5,
+        date_debut=$6, heure_debut=$7, fuseau_horaire=$8, formateur=$9
+       WHERE id=$10 RETURNING *`,
+      [
+        actif !== undefined ? actif : f.actif,
+        titre !== undefined ? titre : f.titre,
+        description !== undefined ? description : f.description,
+        lieu !== undefined ? lieu : f.lieu,
+        duree !== undefined ? duree : f.duree,
+        dateDebut !== undefined ? dateDebut : f.date_debut,
+        heureDebut !== undefined ? heureDebut : f.heure_debut,
+        fuseauHoraire !== undefined ? fuseauHoraire : f.fuseau_horaire,
+        formateur !== undefined ? formateur : f.formateur,
+        req.params.id
+      ]
+    )
     res.json(result.rows[0])
   } catch (err) {
+    console.error(err)
     res.status(500).json({ message: 'Erreur serveur' })
   }
 })
@@ -222,9 +249,7 @@ router.post('/:id/inscriptions', publicLimiter, async (req, res) => {
 
     // Envoyer message WhatsApp de bienvenue
     if (formationInfo) {
-      const dateTexte = formationInfo.date_debut
-        ? new Date(formationInfo.date_debut).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })
-        : 'Date a confirmer'
+      const dateTexte = formatDateHeureFuseau(formationInfo.date_debut, formationInfo.heure_debut, formationInfo.fuseau_horaire)
       const appUrl = process.env.APP_DOWNLOAD_URL || ''
 
       const messageWhatsApp = `Bonjour ${inscrit.nom} ! 🎉
@@ -464,10 +489,26 @@ router.delete('/:id/videos/:videoId/comments/:commentId', auth, async (req, res)
 })
 
 
+function formatDateHeureFuseau(dateDebut, heureDebut, fuseauHoraire) {
+  if (!dateDebut) return 'Date a confirmer'
+  const tz = fuseauHoraire || 'Africa/Lubumbashi'
+  const dateTexte = new Date(dateDebut).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })
+  if (!heureDebut) return dateTexte
+  try {
+    const [h, m] = heureDebut.split(':')
+    const refDate = new Date(dateDebut)
+    refDate.setUTCHours(12, 0, 0, 0)
+    const nomZone = new Intl.DateTimeFormat('fr-FR', { timeZone: tz, timeZoneName: 'short' })
+      .formatToParts(refDate)
+      .find(p => p.type === 'timeZoneName')?.value || tz
+    return `${dateTexte} a ${h}h${m !== '00' ? m : ''} (${nomZone})`
+  } catch {
+    return `${dateTexte} a ${heureDebut}`
+  }
+}
+
 async function envoyerEmailConfirmation(inscrit, formation) {
-  const dateDebut = formation.date_debut
-    ? new Date(formation.date_debut).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })
-    : 'Date à confirmer'
+  const dateDebut = formatDateHeureFuseau(formation.date_debut, formation.heure_debut, formation.fuseau_horaire)
 
   await transporter.sendMail({
     from: `"BeautyCRM" <${process.env.MAIL_USER}>`,
