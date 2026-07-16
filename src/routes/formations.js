@@ -4,13 +4,13 @@ const pool = require('../config/db')
 const auth = require('../middleware/auth')
 const transporter = require('../config/mailer')
 const { envoyerWhatsApp } = require('../utils/whatsapp')
-const rateLimit = require('express-rate-limit')
+const { rateLimit, ipKeyGenerator } = require('express-rate-limit')
 
 const publicLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 20,
   message: { message: 'Trop de requêtes, réessayez plus tard' },
-  keyGenerator: (req) => req.ip,
+  keyGenerator: (req) => ipKeyGenerator(req.ip),
   validate: { trustProxy: false }
 })
 
@@ -242,12 +242,12 @@ Nous reviendrons vers vous très bientôt avec tous les détails pratiques.
 
 — L'équipe IZI360`
 
-      envoyerWhatsApp(inscrit.telephone, messageWhatsApp).catch(err => console.error('WhatsApp erreur:', err))
+      await envoyerWhatsApp(inscrit.telephone, messageWhatsApp).catch(err => console.error('WhatsApp erreur:', err))
     }
 
     // Envoyer email si email fourni
     if (email && formationInfo) {
-      envoyerEmailConfirmation(inscrit, formationInfo).catch(err => console.error('Email erreur:', err))
+      await envoyerEmailConfirmation(inscrit, formationInfo).catch(err => console.error('Email erreur:', err))
     }
 
     res.status(201).json(inscrit)
