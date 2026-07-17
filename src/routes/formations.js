@@ -543,7 +543,7 @@ async function envoyerEmailConfirmation(inscrit, formation) {
           </div>
           <p style="color:#6B7280;font-size:14px;line-height:1.7;">Nous vous contacterons sur WhatsApp au <strong style="color:#1A1F36;">${inscrit.telephone}</strong> avec tous les détails pratiques.</p>
           <div style="text-align:center;margin:32px 0;">
-            <a href="https://beautycrm-web.vercel.app?ref=FORMATION" style="display:inline-block;padding:14px 32px;background:#3D5AFE;color:#fff;text-decoration:none;border-radius:10px;font-weight:700;font-size:15px;">Télécharger BeautyCRM gratuitement</a>
+            <a href="https://beautycrm.izi360.org?ref=LAUD-K99N" style="display:inline-block;padding:14px 32px;background:#3D5AFE;color:#fff;text-decoration:none;border-radius:10px;font-weight:700;font-size:15px;">Télécharger BeautyCRM gratuitement</a>
           </div>
         </div>
         <div style="background:#F5F6FA;padding:24px 40px;text-align:center;border-top:1px solid #E8EAF0;">
