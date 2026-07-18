@@ -178,6 +178,33 @@ router.get('/contexte/:telephone', async (req, res) => {
       [numero]
     )
 
+    let modeEntreprise = null
+    const emailUtilisateur = utilisateurResult.rows[0]?.email
+
+    if (emailUtilisateur) {
+      const estAdmin = await pool.query(
+        'SELECT admin_email, fermee FROM beautycrm_entreprises WHERE admin_email=$1',
+        [emailUtilisateur]
+      )
+      if (estAdmin.rows.length > 0) {
+        modeEntreprise = { statut: 'administrateur', entreprise_fermee: estAdmin.rows[0].fermee === true }
+      } else {
+        const estEmploye = await pool.query(
+          'SELECT admin_email, poste, revoked FROM beautycrm_employes WHERE email=$1 ORDER BY created_at DESC LIMIT 1',
+          [emailUtilisateur]
+        )
+        if (estEmploye.rows.length > 0) {
+          modeEntreprise = {
+            statut: 'employe',
+            poste: estEmploye.rows[0].poste,
+            acces_revoque: estEmploye.rows[0].revoked === true,
+          }
+        } else {
+          modeEntreprise = { statut: 'personnel' }
+        }
+      }
+    }
+
     if (inscriptionResult.rows.length === 0 && utilisateurResult.rows.length === 0) {
       return res.status(404).json({ message: 'Aucun contexte trouve pour ce numero' })
     }
@@ -185,6 +212,7 @@ router.get('/contexte/:telephone', async (req, res) => {
     res.json({
       inscription_formation: inscriptionResult.rows[0] || null,
       utilisateur_beautycrm: utilisateurResult.rows[0] || null,
+      mode_entreprise: modeEntreprise,
     })
   } catch (err) {
     console.error(err)
