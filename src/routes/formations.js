@@ -148,6 +148,38 @@ router.get('/slug/:slug', async (req, res) => {
 })
 
 
+// GET /api/formations/contexte/:telephone - contexte pour l'agent IA WhatsApp (protege par secret partage)
+router.get('/contexte/:telephone', async (req, res) => {
+  try {
+    const secret = req.headers.authorization || ''
+    if (secret !== `Bearer ${process.env.WHATSAPP_SECRET}`) {
+      return res.status(401).json({ message: 'Non autorise' })
+    }
+
+    const numero = (req.params.telephone || '').replace(/[^0-9]/g, '')
+
+    const result = await pool.query(
+      `SELECT i.nom, i.telephone, i.domaine, i.utilise_beautycrm,
+              f.titre, f.description, f.lieu, f.duree, f.date_debut, f.heure_debut, f.fuseau_horaire, f.formateur
+       FROM formation_inscriptions i
+       JOIN formations f ON f.id = i.formation_id
+       WHERE TRIM(REGEXP_REPLACE(i.telephone, '[^0-9]', '', 'g')) = $1
+       ORDER BY i.created_at DESC
+       LIMIT 1`,
+      [numero]
+    )
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: 'Aucun contexte trouve pour ce numero' })
+    }
+
+    res.json(result.rows[0])
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ message: 'Erreur serveur' })
+  }
+})
+
 // GET /api/formations/:id - detail public par id
 router.get('/:id', async (req, res) => {
   try {
