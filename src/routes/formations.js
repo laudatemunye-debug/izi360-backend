@@ -158,7 +158,7 @@ router.get('/contexte/:telephone', async (req, res) => {
 
     const numero = (req.params.telephone || '').replace(/[^0-9]/g, '')
 
-    const result = await pool.query(
+    const inscriptionResult = await pool.query(
       `SELECT i.nom, i.telephone, i.domaine, i.utilise_beautycrm,
               f.titre, f.description, f.lieu, f.duree, f.date_debut, f.heure_debut, f.fuseau_horaire, f.formateur
        FROM formation_inscriptions i
@@ -169,11 +169,23 @@ router.get('/contexte/:telephone', async (req, res) => {
       [numero]
     )
 
-    if (result.rows.length === 0) {
+    const utilisateurResult = await pool.query(
+      `SELECT nom, email, telephone, entreprise, role, devise, version, referral_code, created_at
+       FROM beautycrm_users
+       WHERE TRIM(REGEXP_REPLACE(telephone, '[^0-9]', '', 'g')) = $1
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [numero]
+    )
+
+    if (inscriptionResult.rows.length === 0 && utilisateurResult.rows.length === 0) {
       return res.status(404).json({ message: 'Aucun contexte trouve pour ce numero' })
     }
 
-    res.json(result.rows[0])
+    res.json({
+      inscription_formation: inscriptionResult.rows[0] || null,
+      utilisateur_beautycrm: utilisateurResult.rows[0] || null,
+    })
   } catch (err) {
     console.error(err)
     res.status(500).json({ message: 'Erreur serveur' })
