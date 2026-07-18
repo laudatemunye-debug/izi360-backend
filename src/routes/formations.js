@@ -220,6 +220,77 @@ router.get('/contexte/:telephone', async (req, res) => {
   }
 })
 
+// GET /api/formations/contexte-email/:email - meme contexte mais recherche par email (priorite pour identification)
+router.get('/contexte-email/:email', async (req, res) => {
+  try {
+    const secret = req.headers.authorization || ''
+    if (secret !== `Bearer ${process.env.WHATSAPP_SECRET}`) {
+      return res.status(401).json({ message: 'Non autorise' })
+    }
+
+    const email = (req.params.email || '').trim().toLowerCase()
+    if (!email) return res.status(400).json({ message: 'Email requis' })
+
+    const inscriptionResult = await pool.query(
+      `SELECT i.nom, i.telephone, i.domaine, i.utilise_beautycrm,
+              f.titre, f.description, f.lieu, f.duree, f.date_debut, f.heure_debut, f.fuseau_horaire, f.formateur
+       FROM formation_inscriptions i
+       JOIN formations f ON f.id = i.formation_id
+       WHERE LOWER(TRIM(i.email)) = $1
+       ORDER BY i.created_at DESC
+       LIMIT 1`,
+      [email]
+    )
+
+    const utilisateurResult = await pool.query(
+      `SELECT nom, email, telephone, entreprise, role, devise, version, referral_code, created_at
+       FROM beautycrm_users
+       WHERE LOWER(TRIM(email)) = $1
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [email]
+    )
+
+    let modeEntreprise = null
+    if (utilisateurResult.rows.length > 0 || inscriptionResult.rows.length > 0) {
+      const estAdmin = await pool.query(
+        'SELECT admin_email, fermee FROM beautycrm_entreprises WHERE admin_email=$1',
+        [email]
+      )
+      if (estAdmin.rows.length > 0) {
+        modeEntreprise = { statut: 'administrateur', entreprise_fermee: estAdmin.rows[0].fermee === true }
+      } else {
+        const estEmploye = await pool.query(
+          'SELECT admin_email, poste, revoked FROM beautycrm_employes WHERE email=$1 ORDER BY created_at DESC LIMIT 1',
+          [email]
+        )
+        if (estEmploye.rows.length > 0) {
+          modeEntreprise = {
+            statut: 'employe',
+            poste: estEmploye.rows[0].poste,
+            acces_revoque: estEmploye.rows[0].revoked === true,
+          }
+        } else {
+          modeEntreprise = { statut: 'personnel' }
+        }
+      }
+    }
+
+    if (inscriptionResult.rows.length === 0 && utilisateurResult.rows.length === 0) {
+      return res.status(404).json({ message: 'Aucun contexte trouve pour cet email' })
+    }
+
+    res.json({
+      inscription_formation: inscriptionResult.rows[0] || null,
+      utilisateur_beautycrm: utilisateurResult.rows[0] || null,
+      mode_entreprise: modeEntreprise,
+    })
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ message: 'Erreur serveur' })
+  }
+})
+
 // GET /api/formations/:id - detail public par id
 router.get('/:id', async (req, res) => {
   try {
