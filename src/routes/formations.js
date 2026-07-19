@@ -492,6 +492,36 @@ router.get('/admin/sondage-dernier', async (req, res) => {
   }
 })
 
+// GET /api/formations/admin/sondage-destinataires-restants/:id - ceux qui n'ont pas encore repondu
+router.get('/admin/sondage-destinataires-restants/:id', async (req, res) => {
+  try {
+    const secret = req.headers.authorization || ''
+    if (secret !== `Bearer ${process.env.WHATSAPP_SECRET}`) {
+      return res.status(401).json({ message: 'Non autorise' })
+    }
+
+    const sondageResult = await pool.query('SELECT * FROM sondages WHERE id=$1', [req.params.id])
+    if (sondageResult.rows.length === 0) return res.status(404).json({ message: 'Sondage introuvable' })
+
+    const result = await pool.query(
+      `SELECT nom, telephone FROM beautycrm_users
+       WHERE telephone IS NOT NULL AND telephone != ''
+       AND TRIM(REGEXP_REPLACE(telephone, '[^0-9]', '', 'g')) NOT IN (
+         SELECT TRIM(REGEXP_REPLACE(telephone, '[^0-9]', '', 'g')) FROM sondage_reponses WHERE sondage_id=$1
+       )`,
+      [req.params.id]
+    )
+
+    res.json({
+      sondage: sondageResult.rows[0],
+      destinataires: result.rows,
+    })
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ message: 'Erreur serveur' })
+  }
+})
+
 // GET /api/formations/:id - detail public par id
 router.get('/:id', async (req, res) => {
   try {
