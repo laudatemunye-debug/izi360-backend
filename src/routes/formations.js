@@ -89,6 +89,47 @@ async function ensureTables() {
       created_at TIMESTAMP DEFAULT NOW()
     )
   `)
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS sondages (
+      id SERIAL PRIMARY KEY,
+      type VARCHAR(255) NOT NULL,
+      message TEXT NOT NULL,
+      created_at TIMESTAMP DEFAULT NOW()
+    )
+  `)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS sondage_reponses (
+      id SERIAL PRIMARY KEY,
+      sondage_id INTEGER REFERENCES sondages(id) ON DELETE CASCADE,
+      telephone VARCHAR(50),
+      nom VARCHAR(255),
+      reponse TEXT,
+      created_at TIMESTAMP DEFAULT NOW()
+    )
+  `)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS broadcast_campagnes (
+      id SERIAL PRIMARY KEY,
+      type VARCHAR(50) NOT NULL DEFAULT 'diffusion',
+      message_base TEXT NOT NULL,
+      variantes JSONB,
+      exclure_numeros JSONB DEFAULT '[]',
+      max_par_jour INTEGER DEFAULT 20,
+      statut VARCHAR(20) DEFAULT 'en_cours',
+      created_at TIMESTAMP DEFAULT NOW()
+    )
+  `)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS broadcast_envois (
+      id SERIAL PRIMARY KEY,
+      campagne_id INTEGER REFERENCES broadcast_campagnes(id) ON DELETE CASCADE,
+      telephone VARCHAR(50) NOT NULL,
+      nom VARCHAR(255),
+      statut VARCHAR(20) DEFAULT 'en_attente',
+      envoye_at TIMESTAMP
+    )
+  `)
 }
 ensureTables().catch(err => console.error('Erreur creation tables formations:', err))
 
@@ -353,6 +394,100 @@ router.get('/admin/inscrits-formation/:recherche', async (req, res) => {
     })
   } catch (err) {
     console.error(err)
+    res.status(500).json({ message: 'Erreur serveur' })
+  }
+})
+
+// POST /api/formations/admin/sondage - crée un sondage et retourne la liste des destinataires
+router.post('/admin/sondage', async (req, res) => {
+  try {
+    const secret = req.headers.authorization || ''
+    if (secret !== `Bearer ${process.env.WHATSAPP_SECRET}`) {
+      return res.status(401).json({ message: 'Non autorise' })
+    }
+    const { type, message } = req.body
+    if (!type || !message) return res.status(400).json({ message: 'type et message requis' })
+
+    const result = await pool.query(
+      'INSERT INTO sondages (type, message) VALUES ($1,$2) RETURNING *',
+      [type, message]
+    )
+    const sondage = result.rows[0]
+
+    const destinataires = await pool.query(
+      `SELECT nom, telephone FROM beautycrm_users WHERE telephone IS NOT NULL AND telephone != ''`
+    )
+
+    res.status(201).json({
+      sondage_id: sondage.id,
+      type: sondage.type,
+      message: sondage.message,
+      destinataires: destinataires.rows,
+    })
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ message: 'Erreur serveur' })
+  }
+})
+
+// POST /api/formations/admin/sondage-reponse - enregistre la reponse d'un utilisateur
+router.post('/admin/sondage-reponse', async (req, res) => {
+  try {
+    const secret = req.headers.authorization || ''
+    if (secret !== `Bearer ${process.env.WHATSAPP_SECRET}`) {
+      return res.status(401).json({ message: 'Non autorise' })
+    }
+    const { sondage_id, telephone, nom, reponse } = req.body
+    if (!sondage_id || !telephone || !reponse) return res.status(400).json({ message: 'Champs manquants' })
+
+    await pool.query(
+      'INSERT INTO sondage_reponses (sondage_id, telephone, nom, reponse) VALUES ($1,$2,$3,$4)',
+      [sondage_id, telephone, nom || '', reponse]
+    )
+    res.status(201).json({ message: 'Reponse enregistree' })
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ message: 'Erreur serveur' })
+  }
+})
+
+// GET /api/formations/admin/sondage-resultat/:id - resultats d'un sondage
+router.get('/admin/sondage-resultat/:id', async (req, res) => {
+  try {
+    const secret = req.headers.authorization || ''
+    if (secret !== `Bearer ${process.env.WHATSAPP_SECRET}`) {
+      return res.status(401).json({ message: 'Non autorise' })
+    }
+    const sondageResult = await pool.query('SELECT * FROM sondages WHERE id=$1', [req.params.id])
+    if (sondageResult.rows.length === 0) return res.status(404).json({ message: 'Sondage introuvable' })
+
+    const reponsesResult = await pool.query(
+      'SELECT nom, telephone, reponse, created_at FROM sondage_reponses WHERE sondage_id=$1 ORDER BY created_at DESC',
+      [req.params.id]
+    )
+
+    res.json({
+      sondage: sondageResult.rows[0],
+      nombre_reponses: reponsesResult.rows.length,
+      reponses: reponsesResult.rows,
+    })
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ message: 'Erreur serveur' })
+  }
+})
+
+// GET /api/formations/admin/sondage-dernier - dernier sondage cree (pour /resultat sondage sans id)
+router.get('/admin/sondage-dernier', async (req, res) => {
+  try {
+    const secret = req.headers.authorization || ''
+    if (secret !== `Bearer ${process.env.WHATSAPP_SECRET}`) {
+      return res.status(401).json({ message: 'Non autorise' })
+    }
+    const result = await pool.query('SELECT * FROM sondages ORDER BY created_at DESC LIMIT 1')
+    if (result.rows.length === 0) return res.status(404).json({ message: 'Aucun sondage trouve' })
+    res.json(result.rows[0])
+  } catch (err) {
     res.status(500).json({ message: 'Erreur serveur' })
   }
 })
