@@ -291,6 +291,72 @@ router.get('/contexte-email/:email', async (req, res) => {
   }
 })
 
+// GET /api/formations/admin/stats-utilisateurs?periode=jour|semaine|mois|total
+// Protege par secret partage (utilise par l'agent WhatsApp pour les commandes admin)
+router.get('/admin/stats-utilisateurs', async (req, res) => {
+  try {
+    const secret = req.headers.authorization || ''
+    if (secret !== `Bearer ${process.env.WHATSAPP_SECRET}`) {
+      return res.status(401).json({ message: 'Non autorise' })
+    }
+
+    const periode = req.query.periode || 'total'
+    let filtreDate = ''
+    if (periode === 'jour') filtreDate = `WHERE created_at >= CURRENT_DATE`
+    else if (periode === 'semaine') filtreDate = `WHERE created_at >= date_trunc('week', NOW())`
+    else if (periode === 'mois') filtreDate = `WHERE created_at >= date_trunc('month', NOW())`
+
+    const totalResult = await pool.query(`SELECT COUNT(*)::int as total FROM beautycrm_users`)
+
+    const listeResult = periode !== 'total'
+      ? await pool.query(`SELECT nom, email, telephone, created_at FROM beautycrm_users ${filtreDate} ORDER BY created_at DESC`)
+      : { rows: [] }
+
+    res.json({
+      periode,
+      total_utilisateurs: totalResult.rows[0].total,
+      nombre_periode: periode !== 'total' ? listeResult.rows.length : null,
+      liste: periode !== 'total' ? listeResult.rows : null,
+    })
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ message: 'Erreur serveur' })
+  }
+})
+
+// GET /api/formations/admin/inscrits-formation/:slugOuTitre
+router.get('/admin/inscrits-formation/:recherche', async (req, res) => {
+  try {
+    const secret = req.headers.authorization || ''
+    if (secret !== `Bearer ${process.env.WHATSAPP_SECRET}`) {
+      return res.status(401).json({ message: 'Non autorise' })
+    }
+
+    const recherche = `%${req.params.recherche}%`
+    const result = await pool.query(
+      `SELECT f.titre, i.nom, i.telephone, i.email, i.created_at
+       FROM formation_inscriptions i
+       JOIN formations f ON f.id = i.formation_id
+       WHERE f.titre ILIKE $1 OR f.slug ILIKE $1
+       ORDER BY i.created_at DESC`,
+      [recherche]
+    )
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: 'Aucune formation correspondante trouvee' })
+    }
+
+    res.json({
+      formation_titre: result.rows[0].titre,
+      nombre_inscrits: result.rows.length,
+      inscrits: result.rows.map(r => ({ nom: r.nom, telephone: r.telephone, email: r.email, date: r.created_at })),
+    })
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ message: 'Erreur serveur' })
+  }
+})
+
 // GET /api/formations/:id - detail public par id
 router.get('/:id', async (req, res) => {
   try {
