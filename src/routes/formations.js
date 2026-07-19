@@ -522,6 +522,32 @@ router.get('/admin/sondage-destinataires-restants/:id', async (req, res) => {
   }
 })
 
+// GET /api/formations/admin/tous-destinataires?exclure=num1,num2 - liste pour annonces/diffusions
+router.get('/admin/tous-destinataires', async (req, res) => {
+  try {
+    const secret = req.headers.authorization || ''
+    if (secret !== `Bearer ${process.env.WHATSAPP_SECRET}`) {
+      return res.status(401).json({ message: 'Non autorise' })
+    }
+
+    const exclureListe = (req.query.exclure || '').split(',').map(n => n.replace(/[^0-9]/g, '')).filter(Boolean)
+
+    const result = await pool.query(
+      `SELECT nom, telephone FROM beautycrm_users WHERE telephone IS NOT NULL AND telephone != ''`
+    )
+
+    const destinataires = result.rows.filter(u => {
+      const num = (u.telephone || '').replace(/[^0-9]/g, '')
+      return !exclureListe.includes(num)
+    })
+
+    res.json({ total: destinataires.length, destinataires })
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ message: 'Erreur serveur' })
+  }
+})
+
 // GET /api/formations/:id - detail public par id
 router.get('/:id', async (req, res) => {
   try {
