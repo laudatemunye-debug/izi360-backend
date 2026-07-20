@@ -109,6 +109,22 @@ async function ensureTables() {
     )
   `)
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS sondage_envois (
+      id SERIAL PRIMARY KEY,
+      sondage_id INTEGER REFERENCES sondages(id) ON DELETE CASCADE,
+      telephone VARCHAR(50) NOT NULL,
+      envoye_at TIMESTAMP DEFAULT NOW()
+    )
+  `)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS sondage_envois (
+      id SERIAL PRIMARY KEY,
+      sondage_id INTEGER REFERENCES sondages(id) ON DELETE CASCADE,
+      telephone VARCHAR(50) NOT NULL,
+      envoye_at TIMESTAMP DEFAULT NOW()
+    )
+  `)
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS broadcast_campagnes (
       id SERIAL PRIMARY KEY,
       type VARCHAR(50) NOT NULL DEFAULT 'diffusion',
@@ -542,6 +558,55 @@ router.get('/admin/tous-destinataires', async (req, res) => {
     })
 
     res.json({ total: destinataires.length, destinataires })
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ message: 'Erreur serveur' })
+  }
+})
+
+// POST /api/formations/admin/sondage-marquer-envoye - enregistre qu'un message de sondage a bien ete envoye
+router.post('/admin/sondage-marquer-envoye', async (req, res) => {
+  try {
+    const secret = req.headers.authorization || ''
+    if (secret !== `Bearer ${process.env.WHATSAPP_SECRET}`) {
+      return res.status(401).json({ message: 'Non autorise' })
+    }
+    const { sondage_id, telephone } = req.body
+    if (!sondage_id || !telephone) return res.status(400).json({ message: 'Champs manquants' })
+
+    await pool.query('INSERT INTO sondage_envois (sondage_id, telephone) VALUES ($1,$2)', [sondage_id, telephone])
+    res.status(201).json({ message: 'ok' })
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ message: 'Erreur serveur' })
+  }
+})
+
+// GET /api/formations/admin/sondage-en-attente/:telephone - y a-t-il un sondage envoye a ce numero sans reponse ?
+router.get('/admin/sondage-en-attente/:telephone', async (req, res) => {
+  try {
+    const secret = req.headers.authorization || ''
+    if (secret !== `Bearer ${process.env.WHATSAPP_SECRET}`) {
+      return res.status(401).json({ message: 'Non autorise' })
+    }
+    const numero = (req.params.telephone || '').replace(/[^0-9]/g, '')
+
+    const result = await pool.query(
+      `SELECT e.sondage_id
+       FROM sondage_envois e
+       WHERE TRIM(REGEXP_REPLACE(e.telephone, '[^0-9]', '', 'g')) = $1
+       AND NOT EXISTS (
+         SELECT 1 FROM sondage_reponses r
+         WHERE r.sondage_id = e.sondage_id
+         AND TRIM(REGEXP_REPLACE(r.telephone, '[^0-9]', '', 'g')) = $1
+       )
+       ORDER BY e.envoye_at DESC
+       LIMIT 1`,
+      [numero]
+    )
+
+    if (result.rows.length === 0) return res.json({ en_attente: false })
+    res.json({ en_attente: true, sondage_id: result.rows[0].sondage_id })
   } catch (err) {
     console.error(err)
     res.status(500).json({ message: 'Erreur serveur' })
