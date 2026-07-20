@@ -117,14 +117,6 @@ async function ensureTables() {
     )
   `)
   await pool.query(`
-    CREATE TABLE IF NOT EXISTS sondage_envois (
-      id SERIAL PRIMARY KEY,
-      sondage_id INTEGER REFERENCES sondages(id) ON DELETE CASCADE,
-      telephone VARCHAR(50) NOT NULL,
-      envoye_at TIMESTAMP DEFAULT NOW()
-    )
-  `)
-  await pool.query(`
     CREATE TABLE IF NOT EXISTS broadcast_campagnes (
       id SERIAL PRIMARY KEY,
       type VARCHAR(50) NOT NULL DEFAULT 'diffusion',
@@ -247,7 +239,7 @@ router.get('/contexte/:telephone', async (req, res) => {
         modeEntreprise = { statut: 'administrateur', entreprise_fermee: estAdmin.rows[0].fermee === true }
       } else {
         const estEmploye = await pool.query(
-          'SELECT admin_email, poste, revoked FROM beautycrm_employes WHERE email=$1 ORDER BY created_at DESC LIMIT 1',
+          'SELECT admin_email, poste, revoked FROM beautycrm_employes WHERE email=$1 ORDER BY id DESC LIMIT 1',
           [emailUtilisateur]
         )
         if (estEmploye.rows.length > 0) {
@@ -318,7 +310,7 @@ router.get('/contexte-email/:email', async (req, res) => {
         modeEntreprise = { statut: 'administrateur', entreprise_fermee: estAdmin.rows[0].fermee === true }
       } else {
         const estEmploye = await pool.query(
-          'SELECT admin_email, poste, revoked FROM beautycrm_employes WHERE email=$1 ORDER BY created_at DESC LIMIT 1',
+          'SELECT admin_email, poste, revoked FROM beautycrm_employes WHERE email=$1 ORDER BY id DESC LIMIT 1',
           [email]
         )
         if (estEmploye.rows.length > 0) {
