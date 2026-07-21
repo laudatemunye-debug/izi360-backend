@@ -349,16 +349,23 @@ router.get('/admin/stats-utilisateurs', async (req, res) => {
       return res.status(401).json({ message: 'Non autorise' })
     }
 
-    const periode = req.query.periode || 'total'
+    const periode = req.query.periode || (req.query.date ? 'date' : 'total')
+    const dateParam = req.query.date // format attendu : YYYY-MM-DD
+
     let filtreDate = ''
+    let params = []
     if (periode === 'jour') filtreDate = `WHERE created_at >= CURRENT_DATE`
     else if (periode === 'semaine') filtreDate = `WHERE created_at >= date_trunc('week', NOW())`
     else if (periode === 'mois') filtreDate = `WHERE created_at >= date_trunc('month', NOW())`
+    else if (periode === 'date' && dateParam) {
+      filtreDate = `WHERE created_at::date = $1`
+      params = [dateParam]
+    }
 
     const totalResult = await pool.query(`SELECT COUNT(*)::int as total FROM beautycrm_users`)
 
     const listeResult = periode !== 'total'
-      ? await pool.query(`SELECT nom, email, telephone, created_at FROM beautycrm_users ${filtreDate} ORDER BY created_at DESC`)
+      ? await pool.query(`SELECT nom, email, telephone, created_at FROM beautycrm_users ${filtreDate} ORDER BY created_at DESC`, params)
       : { rows: [] }
 
     res.json({
