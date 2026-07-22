@@ -138,6 +138,13 @@ async function ensureTables() {
       envoye_at TIMESTAMP
     )
   `)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS numeros_exclus (
+      id SERIAL PRIMARY KEY,
+      telephone VARCHAR(50) UNIQUE NOT NULL,
+      created_at TIMESTAMP DEFAULT NOW()
+    )
+  `)
 }
 ensureTables().catch(err => console.error('Erreur creation tables formations:', err))
 
@@ -430,7 +437,9 @@ router.post('/admin/sondage', async (req, res) => {
     const sondage = result.rows[0]
 
     const destinataires = await pool.query(
-      `SELECT nom, telephone FROM beautycrm_users WHERE telephone IS NOT NULL AND telephone != ''`
+      `SELECT nom, telephone FROM beautycrm_users
+       WHERE telephone IS NOT NULL AND telephone != ''
+       AND TRIM(REGEXP_REPLACE(telephone, '[^0-9]', '', 'g')) NOT IN (SELECT telephone FROM numeros_exclus)`
     )
 
     res.status(201).json({
@@ -551,9 +560,12 @@ router.get('/admin/tous-destinataires', async (req, res) => {
       `SELECT nom, telephone FROM beautycrm_users WHERE telephone IS NOT NULL AND telephone != ''`
     )
 
+    const exclusResult = await pool.query('SELECT telephone FROM numeros_exclus')
+    const numerosExclusPermanents = exclusResult.rows.map(r => r.telephone)
+
     const destinataires = result.rows.filter(u => {
       const num = (u.telephone || '').replace(/[^0-9]/g, '')
-      return !exclureListe.includes(num)
+      return !exclureListe.includes(num) && !numerosExclusPermanents.includes(num)
     })
 
     res.json({ total: destinataires.length, destinataires })
@@ -606,6 +618,47 @@ router.get('/admin/sondage-en-attente/:telephone', async (req, res) => {
 
     if (result.rows.length === 0) return res.json({ en_attente: false })
     res.json({ en_attente: true, sondage_id: result.rows[0].sondage_id })
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ message: 'Erreur serveur' })
+  }
+})
+
+// POST /api/formations/admin/desinscrire - exclut un numero de tous les futurs envois
+router.post('/admin/desinscrire', async (req, res) => {
+  try {
+    const secret = req.headers.authorization || ''
+    if (secret !== `Bearer ${process.env.WHATSAPP_SECRET}`) {
+      return res.status(401).json({ message: 'Non autorise' })
+    }
+    const numero = (req.body.telephone || '').replace(/[^0-9]/g, '')
+    if (!numero) return res.status(400).json({ message: 'Telephone requis' })
+
+    await pool.query('INSERT INTO numeros_exclus (telephone) VALUES ($1) ON CONFLICT (telephone) DO NOTHING', [numero])
+    res.status(201).json({ message: 'Numero exclu des futurs envois' })
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ message: 'Erreur serveur' })
+  }
+})
+
+// POST /api/formations/admin/employe-statut - revoquer/reactiver un employe BeautyCRM par email
+router.post('/admin/employe-statut', async (req, res) => {
+  try {
+    const secret = req.headers.authorization || ''
+    if (secret !== `Bearer ${process.env.WHATSAPP_SECRET}`) {
+      return res.status(401).json({ message: 'Non autorise' })
+    }
+    const { email, revoked } = req.body
+    if (!email || typeof revoked !== 'boolean') return res.status(400).json({ message: 'Champs manquants' })
+
+    const result = await pool.query(
+      'UPDATE beautycrm_employes SET revoked=$1 WHERE email=$2 RETURNING id, nom, admin_email',
+      [revoked, email]
+    )
+    if (result.rows.length === 0) return res.status(404).json({ message: 'Employe introuvable' })
+
+    res.json({ message: 'ok', employe: result.rows[0] })
   } catch (err) {
     console.error(err)
     res.status(500).json({ message: 'Erreur serveur' })
