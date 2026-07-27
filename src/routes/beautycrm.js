@@ -111,7 +111,7 @@ router.post('/register', async (req, res) => {
                   </table>
                 </div>
 
-                <p style="color: #555;">Votre essai gratuit de <strong>14 jours</strong> est maintenant actif. Profitez de toutes les fonctionnalités sans limitation !</p>
+                <p style="color: #555;">Votre essai gratuit de <strong>30 jours</strong> est maintenant actif. Profitez de toutes les fonctionnalités sans limitation !</p>
 
                 <div style="text-align: center; margin: 32px 0;">
                   <a href="https://beautycrm-web.vercel.app" style="background: linear-gradient(135deg, #C084FC, #9333EA); color: #fff; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-weight: 700; font-size: 16px;">
@@ -265,6 +265,77 @@ router.delete('/users/:id', auth, async (req, res) => {
     await pool.query('DELETE FROM beautycrm_users WHERE id = $1', [req.params.id])
     res.json({ message: 'Utilisateur supprimé' })
   } catch (err) { res.status(500).json({ message: 'Erreur serveur' }) }
+})
+
+
+// Statut du forfait d'un utilisateur (appele par l'app BeautyCRM au demarrage)
+router.get('/forfait/status', async (req, res) => {
+  try {
+    const { email, secret } = req.query
+    if (secret !== BEAUTYCRM_SECRET) return res.status(401).json({ message: 'Non autorise' })
+    if (!email) return res.status(400).json({ message: 'Email requis' })
+
+    const result = await pool.query(
+      'SELECT forfait_type, forfait_expire_le, ia_addon, created_at FROM beautycrm_users WHERE email=$1',
+      [email]
+    )
+    if (result.rows.length === 0) return res.status(404).json({ message: 'Utilisateur introuvable' })
+
+    const u = result.rows[0]
+    const maintenant = new Date()
+    const finEssai = new Date(new Date(u.created_at).getTime() + 30 * 24 * 60 * 60 * 1000)
+    const forfaitPayantActif = u.forfait_type !== 'essai' && u.forfait_expire_le && new Date(u.forfait_expire_le) > maintenant
+
+    let statut, joursRestantsEssai = 0
+    if (forfaitPayantActif) {
+      statut = u.forfait_type // 'personnel' ou 'entreprise'
+    } else if (maintenant <= finEssai) {
+      statut = 'essai'
+      joursRestantsEssai = Math.ceil((finEssai - maintenant) / (24 * 60 * 60 * 1000))
+    } else {
+      statut = 'expire' // lecture seule, IA coupee
+    }
+
+    res.json({
+      statut,
+      jours_restants_essai: joursRestantsEssai,
+      ia_addon: forfaitPayantActif ? u.ia_addon : false,
+      forfait_expire_le: u.forfait_expire_le,
+    })
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ message: 'Erreur serveur' })
+  }
+})
+
+// Activation manuelle d'un forfait par un admin (Phase 1 - paiement manuel)
+router.post('/forfait/activer', auth, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ message: 'Acces refuse' })
+    const { email, forfait_type, duree_mois, ia_addon } = req.body
+    if (!email || !forfait_type || !duree_mois) {
+      return res.status(400).json({ message: 'email, forfait_type et duree_mois sont requis' })
+    }
+    if (!['personnel', 'entreprise'].includes(forfait_type)) {
+      return res.status(400).json({ message: "forfait_type doit etre 'personnel' ou 'entreprise'" })
+    }
+
+    const result = await pool.query(
+      `UPDATE beautycrm_users
+       SET forfait_type = $1,
+           forfait_expire_le = NOW() + ($2 || ' months')::interval,
+           ia_addon = $3
+       WHERE email = $4
+       RETURNING email, forfait_type, forfait_expire_le, ia_addon`,
+      [forfait_type, duree_mois, !!ia_addon, email]
+    )
+    if (result.rows.length === 0) return res.status(404).json({ message: 'Utilisateur introuvable' })
+
+    res.json({ message: 'Forfait active', user: result.rows[0] })
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ message: 'Erreur serveur' })
+  }
 })
 
 module.exports = router
