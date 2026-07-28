@@ -283,7 +283,13 @@ router.get('/forfait/status', async (req, res) => {
 
     const u = result.rows[0]
     const maintenant = new Date()
-    const finEssai = new Date(new Date(u.created_at).getTime() + 30 * 24 * 60 * 60 * 1000)
+    // Date fixe : tous les comptes crees avant cette date voient leur essai
+    // demarrer a cette date (pas a leur inscription reelle). Les comptes
+    // crees apres cette date gardent leurs 30 jours a partir de leur propre inscription.
+    const DATE_FIXE_DEBUT_ESSAI = new Date('2026-09-01T00:00:00Z')
+    const dateInscription = new Date(u.created_at)
+    const debutCompte = dateInscription < DATE_FIXE_DEBUT_ESSAI ? DATE_FIXE_DEBUT_ESSAI : dateInscription
+    const finEssai = new Date(debutCompte.getTime() + 30 * 24 * 60 * 60 * 1000)
     const forfaitPayantActif = u.forfait_type !== 'essai' && u.forfait_expire_le && new Date(u.forfait_expire_le) > maintenant
 
     let statut, joursRestantsEssai = 0
