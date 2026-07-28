@@ -344,4 +344,105 @@ router.post('/forfait/activer', auth, async (req, res) => {
   }
 })
 
+
+const PRIX_FORFAITS = {
+  personnel: { 1: 1.5, 12: 10 },
+  entreprise: { 1: 5, 12: 40 },
+}
+const PRIX_ADDON_IA = {
+  personnel: { 1: 1, 12: 8 },
+  entreprise: { 1: 3, 12: 25 },
+}
+
+// Secret separe pour le telephone/app qui detecte les SMS (a definir dans .env)
+const SMS_SECRET = process.env.BEAUTYCRM_SMS_SECRET || 'change_moi_en_prod'
+
+// 1. L'utilisateur demande a payer -> generation d'un code de reference unique
+router.post('/forfait/demande', async (req, res) => {
+  try {
+    const { email, secret, forfait_type, duree_mois, ia_addon } = req.body
+    if (secret !== BEAUTYCRM_SECRET) return res.status(401).json({ message: 'Non autorise' })
+    if (!email || !forfait_type || !duree_mois) {
+      return res.status(400).json({ message: 'email, forfait_type et duree_mois sont requis' })
+    }
+    if (!PRIX_FORFAITS[forfait_type] || !PRIX_FORFAITS[forfait_type][duree_mois]) {
+      return res.status(400).json({ message: 'Combinaison forfait_type/duree_mois invalide' })
+    }
+
+    let montant = PRIX_FORFAITS[forfait_type][duree_mois]
+    if (ia_addon && PRIX_ADDON_IA[forfait_type]?.[duree_mois]) {
+      montant += PRIX_ADDON_IA[forfait_type][duree_mois]
+    }
+
+    // Genere un code unique du type BCRM-A1B2C3
+    const genCode = () => 'BCRM-' + Math.random().toString(36).toUpperCase().slice(2, 8)
+    let code, codeOk = false
+    while (!codeOk) {
+      code = genCode()
+      const exists = await pool.query('SELECT id FROM beautycrm_demandes_paiement WHERE code_reference=$1', [code])
+      if (exists.rows.length === 0) codeOk = true
+    }
+
+    await pool.query(
+      `INSERT INTO beautycrm_demandes_paiement (email, code_reference, forfait_type, duree_mois, ia_addon, montant_attendu)
+       VALUES ($1,$2,$3,$4,$5,$6)`,
+      [email, code, forfait_type, duree_mois, !!ia_addon, montant]
+    )
+
+    res.status(201).json({
+      code_reference: code,
+      montant_a_payer: montant,
+      instructions: `Envoyez ${montant}$ (equivalent en Francs Congolais au taux du jour) par Mobile Money, en indiquant le code ${code} dans le motif du transfert.`,
+    })
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ message: 'Erreur serveur' })
+  }
+})
+
+// 2. Le telephone dedie appelle cette route quand il detecte un SMS de reception d'argent
+router.post('/forfait/sms-recu', async (req, res) => {
+  try {
+    const { secret, texte_sms } = req.body
+    if (secret !== SMS_SECRET) return res.status(401).json({ message: 'Non autorise' })
+    if (!texte_sms) return res.status(400).json({ message: 'texte_sms requis' })
+
+    // Cherche un code du type BCRM-XXXXXX dans le texte du SMS
+    const match = texte_sms.match(/BCRM-[A-Z0-9]{6}/)
+    if (!match) {
+      return res.status(200).json({ message: 'Aucun code de reference trouve dans ce SMS', traite: false })
+    }
+    const code = match[0]
+
+    const demande = await pool.query(
+      "SELECT * FROM beautycrm_demandes_paiement WHERE code_reference=$1 AND statut='attente'",
+      [code]
+    )
+    if (demande.rows.length === 0) {
+      return res.status(200).json({ message: 'Code trouve mais aucune demande en attente correspondante', traite: false })
+    }
+
+    const d = demande.rows[0]
+
+    await pool.query(
+      `UPDATE beautycrm_users
+       SET forfait_type = $1,
+           forfait_expire_le = NOW() + ($2 || ' months')::interval,
+           ia_addon = $3
+       WHERE email = $4`,
+      [d.forfait_type, d.duree_mois, d.ia_addon, d.email]
+    )
+
+    await pool.query(
+      "UPDATE beautycrm_demandes_paiement SET statut='confirme', confirme_at=NOW() WHERE id=$1",
+      [d.id]
+    )
+
+    res.json({ message: `Forfait active pour ${d.email}`, traite: true, code })
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ message: 'Erreur serveur' })
+  }
+})
+
 module.exports = router
