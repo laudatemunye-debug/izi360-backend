@@ -3,6 +3,7 @@ const router = express.Router()
 const pool = require('../config/db')
 const auth = require('../middleware/auth')
 const transporter = require('../config/mailer')
+const { envoyerWhatsApp } = require('../utils/whatsapp')
 
 const BEAUTYCRM_SECRET = process.env.BEAUTYCRM_SECRET || 'beautycrm_izi360_2026'
 
@@ -400,26 +401,118 @@ router.post('/forfait/demande', async (req, res) => {
   }
 })
 
-// 2. Le telephone dedie appelle cette route quand il detecte un SMS de reception d'argent
+
+
+
+const ADMIN_WHATSAPP = process.env.ADMIN_WHATSAPP_NUMBER || '243835771593'
+
+// Table de correspondance montant (USD) -> plan. Tolerance de 0.05$ pour les arrondis.
+const TABLE_MONTANTS = [
+  { montant: 1.5,  forfait_type: 'personnel',  duree_mois: 1,  ia_addon: false },
+  { montant: 10,   forfait_type: 'personnel',  duree_mois: 12, ia_addon: false },
+  { montant: 2.5,  forfait_type: 'personnel',  duree_mois: 1,  ia_addon: true },
+  { montant: 18,   forfait_type: 'personnel',  duree_mois: 12, ia_addon: true },
+  { montant: 5,    forfait_type: 'entreprise', duree_mois: 1,  ia_addon: false },
+  { montant: 40,   forfait_type: 'entreprise', duree_mois: 12, ia_addon: false },
+  { montant: 8,    forfait_type: 'entreprise', duree_mois: 1,  ia_addon: true },
+  { montant: 65,   forfait_type: 'entreprise', duree_mois: 12, ia_addon: true },
+]
+
+function trouverPlan(montant) {
+  return TABLE_MONTANTS.find(p => Math.abs(p.montant - montant) <= 0.05) || null
+}
+
+// Extrait numero expediteur + montant USD depuis differents formats de SMS mobile money.
+// Retourne null si aucun format connu ne correspond.
+function parserSmsPaiement(texte) {
+  // Format M-Pesa "Vous avez recu" (transfert entre particuliers)
+  let m = texte.match(/Vous avez recu\s+USD\s*([\d.,]+)\s+de\s+(\d+)\s+([^.]+)\./i)
+  if (m) {
+    return {
+      montant: parseFloat(m[1].replace(',', '.')),
+      numero: m[2],
+      nom: m[3].trim(),
+    }
+  }
+  // Format M-Pesa "depot effectue par" (parfois utilise selon le canal de paiement)
+  m = texte.match(/depot effectue par\s+(\d+)\s*-\s*([^\d]+?)\d*\s+a reussi Montant:\s*([\d.,]+)\s*USD/i)
+  if (m) {
+    return {
+      montant: parseFloat(m[3].replace(',', '.')),
+      numero: m[1],
+      nom: m[2].trim(),
+    }
+  }
+  return null
+}
+
+function derniersChiffres(numero, n = 9) {
+  return (numero || '').replace(/\D/g, '').slice(-n)
+}
+
 router.post('/forfait/sms-recu', async (req, res) => {
   try {
     const { secret, texte_sms } = req.body
     if (secret !== SMS_SECRET) return res.status(401).json({ message: 'Non autorise' })
     if (!texte_sms) return res.status(400).json({ message: 'texte_sms requis' })
 
-    // Cherche un code du type BCRM-XXXXXX dans le texte du SMS
-    const match = texte_sms.match(/BCRM-[A-Z0-9]{6}/)
-    if (!match) {
-      return res.status(200).json({ message: 'Aucun code de reference trouve dans ce SMS', traite: false })
+    const infos = parserSmsPaiement(texte_sms)
+    if (!infos) {
+      await envoyerWhatsApp(ADMIN_WHATSAPP, `Paiement recu mais SMS non reconnu, verification manuelle requise :\n\n${texte_sms}`)
+      return res.json({ traite: false, raison: 'sms_non_reconnu' })
     }
-    const code = match[0]
+
+    const plan = trouverPlan(infos.montant)
+    if (!plan) {
+      await envoyerWhatsApp(ADMIN_WHATSAPP, `Paiement de ${infos.montant}$ recu de ${infos.nom} (${infos.numero}), mais montant ne correspond a aucun forfait connu. Verification manuelle requise.`)
+      return res.json({ traite: false, raison: 'montant_non_reconnu', infos })
+    }
+
+    const chiffresExpediteur = derniersChiffres(infos.numero)
+    const utilisateur = await pool.query(
+      `SELECT email, telephone FROM beautycrm_users WHERE RIGHT(REGEXP_REPLACE(telephone, '\\D', '', 'g'), 9) = $1`,
+      [chiffresExpediteur]
+    )
+
+    if (utilisateur.rows.length === 0) {
+      await envoyerWhatsApp(ADMIN_WHATSAPP, `Paiement de ${infos.montant}$ recu de ${infos.nom} (${infos.numero}) pour un forfait ${plan.forfait_type}/${plan.duree_mois} mois${plan.ia_addon ? ' + IA' : ''}, mais aucun compte BeautyCRM ne correspond a ce numero. Activation manuelle requise.`)
+      return res.json({ traite: false, raison: 'compte_introuvable', infos, plan })
+    }
+
+    const email = utilisateur.rows[0].email
+    const code = Math.floor(100000 + Math.random() * 900000).toString()
+
+    await pool.query(
+      `INSERT INTO beautycrm_demandes_paiement (email, code_reference, forfait_type, duree_mois, ia_addon, montant_attendu, statut)
+       VALUES ($1,$2,$3,$4,$5,$6,'attente')`,
+      [email, code, plan.forfait_type, plan.duree_mois, plan.ia_addon, infos.montant]
+    )
+
+    await envoyerWhatsApp(
+      infos.numero,
+      `Merci pour votre paiement de ${infos.montant}$ ! Voici votre code d'activation BeautyCRM : ${code}\n\nEntrez ce code dans l'application (Parametres > Activer mon forfait) pour activer votre acces.`
+    )
+
+    res.json({ traite: true, email, plan, code })
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ message: 'Erreur serveur' })
+  }
+})
+
+// L'utilisateur entre le code recu par WhatsApp dans l'app pour activer son forfait.
+router.post('/forfait/valider-code', async (req, res) => {
+  try {
+    const { email, secret, code } = req.body
+    if (secret !== BEAUTYCRM_SECRET) return res.status(401).json({ message: 'Non autorise' })
+    if (!email || !code) return res.status(400).json({ message: 'email et code sont requis' })
 
     const demande = await pool.query(
-      "SELECT * FROM beautycrm_demandes_paiement WHERE code_reference=$1 AND statut='attente'",
-      [code]
+      "SELECT * FROM beautycrm_demandes_paiement WHERE code_reference=$1 AND email=$2 AND statut='attente'",
+      [code, email]
     )
     if (demande.rows.length === 0) {
-      return res.status(200).json({ message: 'Code trouve mais aucune demande en attente correspondante', traite: false })
+      return res.status(404).json({ message: 'Code invalide, expire, ou deja utilise' })
     }
 
     const d = demande.rows[0]
@@ -430,7 +523,7 @@ router.post('/forfait/sms-recu', async (req, res) => {
            forfait_expire_le = NOW() + ($2 || ' months')::interval,
            ia_addon = $3
        WHERE email = $4`,
-      [d.forfait_type, d.duree_mois, d.ia_addon, d.email]
+      [d.forfait_type, d.duree_mois, d.ia_addon, email]
     )
 
     await pool.query(
@@ -438,7 +531,7 @@ router.post('/forfait/sms-recu', async (req, res) => {
       [d.id]
     )
 
-    res.json({ message: `Forfait active pour ${d.email}`, traite: true, code })
+    res.json({ message: 'Forfait active avec succes', forfait_type: d.forfait_type, duree_mois: d.duree_mois, ia_addon: d.ia_addon })
   } catch (err) {
     console.error(err)
     res.status(500).json({ message: 'Erreur serveur' })
