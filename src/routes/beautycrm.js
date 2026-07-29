@@ -279,7 +279,7 @@ router.post('/forfait/desactiver', auth, async (req, res) => {
 
     const result = await pool.query(
       `UPDATE beautycrm_users
-       SET forfait_type = 'essai', forfait_expire_le = NULL, ia_addon = FALSE
+       SET forfait_type = 'essai', forfait_expire_le = NULL, ia_addon = FALSE, forfait_active_depuis = NULL
        WHERE email = $1
        RETURNING email, forfait_type`,
       [email]
@@ -300,7 +300,7 @@ router.get('/forfait/status', async (req, res) => {
     if (!email) return res.status(400).json({ message: 'Email requis' })
 
     const result = await pool.query(
-      'SELECT forfait_type, forfait_expire_le, ia_addon, created_at FROM beautycrm_users WHERE email=$1',
+      'SELECT forfait_type, forfait_expire_le, ia_addon, created_at, forfait_active_depuis FROM beautycrm_users WHERE email=$1',
       [email]
     )
     if (result.rows.length === 0) return res.status(404).json({ message: 'Utilisateur introuvable' })
@@ -331,6 +331,7 @@ router.get('/forfait/status', async (req, res) => {
       jours_restants_essai: joursRestantsEssai,
       ia_addon: forfaitPayantActif ? u.ia_addon : false,
       forfait_expire_le: u.forfait_expire_le,
+      forfait_active_depuis: u.forfait_active_depuis,
     })
   } catch (err) {
     console.error(err)
@@ -354,9 +355,10 @@ router.post('/forfait/activer', auth, async (req, res) => {
       `UPDATE beautycrm_users
        SET forfait_type = $1,
            forfait_expire_le = NOW() + ($2 || ' months')::interval,
-           ia_addon = $3
+           ia_addon = $3,
+           forfait_active_depuis = NOW()
        WHERE email = $4
-       RETURNING email, forfait_type, forfait_expire_le, ia_addon`,
+       RETURNING email, forfait_type, forfait_expire_le, ia_addon, forfait_active_depuis`,
       [forfait_type, duree_mois, !!ia_addon, email]
     )
     if (result.rows.length === 0) return res.status(404).json({ message: 'Utilisateur introuvable' })
@@ -544,7 +546,8 @@ router.post('/forfait/valider-code', async (req, res) => {
       `UPDATE beautycrm_users
        SET forfait_type = $1,
            forfait_expire_le = NOW() + ($2 || ' months')::interval,
-           ia_addon = $3
+           ia_addon = $3,
+           forfait_active_depuis = NOW()
        WHERE email = $4`,
       [d.forfait_type, d.duree_mois, d.ia_addon, email]
     )
