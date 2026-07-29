@@ -270,6 +270,29 @@ router.delete('/users/:id', auth, async (req, res) => {
 
 
 // Statut du forfait d'un utilisateur (appele par l'app BeautyCRM au demarrage)
+// Desactivation manuelle d'un forfait par un admin (ex: paiement conteste, erreur, etc.)
+router.post('/forfait/desactiver', auth, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ message: 'Acces refuse' })
+    const { email } = req.body
+    if (!email) return res.status(400).json({ message: 'email requis' })
+
+    const result = await pool.query(
+      `UPDATE beautycrm_users
+       SET forfait_type = 'essai', forfait_expire_le = NULL, ia_addon = FALSE
+       WHERE email = $1
+       RETURNING email, forfait_type`,
+      [email]
+    )
+    if (result.rows.length === 0) return res.status(404).json({ message: 'Utilisateur introuvable' })
+
+    res.json({ message: 'Forfait desactive', user: result.rows[0] })
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ message: 'Erreur serveur' })
+  }
+})
+
 router.get('/forfait/status', async (req, res) => {
   try {
     const { email, secret } = req.query
