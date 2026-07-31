@@ -293,6 +293,54 @@ router.post('/forfait/desactiver', auth, async (req, res) => {
   }
 })
 
+// Si un compte en mode Entreprise active un forfait Personnel, le mode Entreprise
+// doit se desactiver automatiquement (les employes perdent l'acces), avec notification a l'admin.
+async function retrograderVersPersonnelSiEntreprise(email) {
+  try {
+    const entRow = await pool.query('SELECT admin_whatsapp FROM beautycrm_entreprises WHERE admin_email=$1', [email])
+    if (entRow.rows.length === 0) return // ce compte n'est pas admin d'une entreprise, rien a faire
+
+    const adminWhatsapp = entRow.rows[0].admin_whatsapp
+
+    // Suppression de l'entreprise : cascade automatiquement sur les employes (revoque leur acces)
+    await pool.query('DELETE FROM beautycrm_entreprises WHERE admin_email=$1', [email])
+
+    const messageAlerte = "Votre forfait Personnel a ete active avec succes. Consequence importante : votre mode Entreprise a ete desactive automatiquement, et vos employes ne pourront plus acceder aux donnees partagees de l'entreprise. Vous pouvez continuer a utiliser BeautyCRM en solo des maintenant."
+
+    if (adminWhatsapp) {
+      await envoyerWhatsApp(adminWhatsapp, messageAlerte)
+    } else {
+      // Repli : utiliser le telephone personnel du compte si aucun numero admin_whatsapp enregistre
+      const userRow = await pool.query('SELECT telephone FROM beautycrm_users WHERE email=$1', [email])
+      if (userRow.rows[0]?.telephone) {
+        await envoyerWhatsApp(userRow.rows[0].telephone, messageAlerte)
+      }
+    }
+  } catch (e) {
+    console.error('Erreur retrogradation entreprise vers personnel:', e.message)
+  }
+}
+
+// Symetrique de la fonction ci-dessus : si un compte personnel active un forfait
+// Entreprise, on ne peut pas activer automatiquement le mode Entreprise (necessite
+// une connexion Google Drive faite par l'utilisateur), mais on le notifie que
+// c'est maintenant possible.
+async function notifierActivationEntrepriseDisponible(email) {
+  try {
+    const entRow = await pool.query('SELECT admin_email FROM beautycrm_entreprises WHERE admin_email=$1', [email])
+    if (entRow.rows.length > 0) return // deja en mode entreprise, rien a faire
+
+    const userRow = await pool.query('SELECT telephone FROM beautycrm_users WHERE email=$1', [email])
+    const telephone = userRow.rows[0]?.telephone
+    if (!telephone) return
+
+    const message = "Votre forfait Entreprise a ete active avec succes ! Vous pouvez maintenant configurer le mode Entreprise dans BeautyCRM (Parametres > Mode Entreprise) pour inviter vos employes et acceder a la comptabilite/paie."
+    await envoyerWhatsApp(telephone, message)
+  } catch (e) {
+    console.error('Erreur notification activation entreprise:', e.message)
+  }
+}
+
 router.get('/forfait/status', async (req, res) => {
   try {
     const { email, secret } = req.query
@@ -362,6 +410,12 @@ router.post('/forfait/activer', auth, async (req, res) => {
       [forfait_type, duree_mois, !!ia_addon, email]
     )
     if (result.rows.length === 0) return res.status(404).json({ message: 'Utilisateur introuvable' })
+
+    if (forfait_type === 'personnel') {
+      await retrograderVersPersonnelSiEntreprise(email)
+    } else if (forfait_type === 'entreprise') {
+      await notifierActivationEntrepriseDisponible(email)
+    }
 
     res.json({ message: 'Forfait active', user: result.rows[0] })
   } catch (err) {
@@ -556,6 +610,12 @@ router.post('/forfait/valider-code', async (req, res) => {
       "UPDATE beautycrm_demandes_paiement SET statut='confirme', confirme_at=NOW() WHERE id=$1",
       [d.id]
     )
+
+    if (d.forfait_type === 'personnel') {
+      await retrograderVersPersonnelSiEntreprise(email)
+    } else if (d.forfait_type === 'entreprise') {
+      await notifierActivationEntrepriseDisponible(email)
+    }
 
     res.json({ message: 'Forfait active avec succes', forfait_type: d.forfait_type, duree_mois: d.duree_mois, ia_addon: d.ia_addon })
   } catch (err) {
