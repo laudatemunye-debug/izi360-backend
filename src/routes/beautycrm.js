@@ -33,6 +33,19 @@ function invaliderCacheTarifs() {
   _tarifsCache = null
 }
 
+// Lecture publique des tarifs (pour affichage dans l'app, avant achat) - protege par secret app
+router.get('/tarifs/public', async (req, res) => {
+  try {
+    const { secret } = req.query
+    if (secret !== BEAUTYCRM_SECRET) return res.status(401).json({ message: 'Non autorise' })
+    const tarifs = await getTarifs()
+    res.json(tarifs)
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ message: 'Erreur serveur' })
+  }
+})
+
 // Lecture des tarifs pour l'admin (aucun filtre, tout est renvoyé tel quel)
 router.get('/tarifs', auth, async (req, res) => {
   try {
