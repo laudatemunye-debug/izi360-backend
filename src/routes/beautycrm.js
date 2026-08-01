@@ -7,6 +7,71 @@ const { envoyerWhatsApp } = require('../utils/whatsapp')
 
 const BEAUTYCRM_SECRET = process.env.BEAUTYCRM_SECRET || 'beautycrm_izi360_2026'
 
+// Cache mémoire des tarifs (rechargé depuis la DB, TTL court pour rester réactif aux modifs admin)
+let _tarifsCache = null
+let _tarifsCacheTime = 0
+const TARIFS_CACHE_TTL = 30000 // 30s
+
+async function getTarifs() {
+  const now = Date.now()
+  if (_tarifsCache && (now - _tarifsCacheTime) < TARIFS_CACHE_TTL) {
+    return _tarifsCache
+  }
+  const result = await pool.query('SELECT forfait_type, duree_mois, champ, prix FROM beautycrm_tarifs')
+  const tarifs = {}
+  for (const row of result.rows) {
+    if (!tarifs[row.forfait_type]) tarifs[row.forfait_type] = {}
+    if (!tarifs[row.forfait_type][row.duree_mois]) tarifs[row.forfait_type][row.duree_mois] = {}
+    tarifs[row.forfait_type][row.duree_mois][row.champ] = parseFloat(row.prix)
+  }
+  _tarifsCache = tarifs
+  _tarifsCacheTime = now
+  return tarifs
+}
+
+function invaliderCacheTarifs() {
+  _tarifsCache = null
+}
+
+// Lecture des tarifs pour l'admin (aucun filtre, tout est renvoyé tel quel)
+router.get('/tarifs', auth, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ message: 'Accès refusé' })
+    const result = await pool.query('SELECT id, forfait_type, duree_mois, champ, prix, updated_at FROM beautycrm_tarifs ORDER BY forfait_type, duree_mois, champ')
+    res.json(result.rows)
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ message: 'Erreur serveur' })
+  }
+})
+
+// Mise à jour d'un tarif (upsert par forfait_type + duree_mois + champ)
+router.put('/tarifs', auth, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ message: 'Accès refusé' })
+    const { forfait_type, duree_mois, champ, prix } = req.body
+    if (!forfait_type || !duree_mois || !champ || prix == null) {
+      return res.status(400).json({ message: 'forfait_type, duree_mois, champ et prix sont requis' })
+    }
+    if (isNaN(parseFloat(prix)) || parseFloat(prix) < 0) {
+      return res.status(400).json({ message: 'Prix invalide' })
+    }
+    const result = await pool.query(
+      `INSERT INTO beautycrm_tarifs (forfait_type, duree_mois, champ, prix, updated_at)
+       VALUES ($1,$2,$3,$4,NOW())
+       ON CONFLICT (forfait_type, duree_mois, champ)
+       DO UPDATE SET prix = EXCLUDED.prix, updated_at = NOW()
+       RETURNING *`,
+      [forfait_type, duree_mois, champ, prix]
+    )
+    invaliderCacheTarifs()
+    res.json(result.rows[0])
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ message: 'Erreur serveur' })
+  }
+})
+
 router.post('/register', async (req, res) => {
   try {
     const { secret, nom, email, telephone, pays, ville, entreprise, role, devise, version, plateforme, ip_address, referred_by } = req.body
@@ -425,14 +490,7 @@ router.post('/forfait/activer', auth, async (req, res) => {
 })
 
 
-const PRIX_FORFAITS = {
-  personnel: { 1: 1.5, 12: 10 },
-  entreprise: { 1: 5, 12: 40 },
-}
-const PRIX_ADDON_IA = {
-  personnel: { 1: 1, 12: 8 },
-  entreprise: { 1: 3, 12: 25 },
-}
+// Tarifs desormais stockes en base (table beautycrm_tarifs), voir getTarifs() plus haut.
 
 // Secret separe pour le telephone/app qui detecte les SMS (a definir dans .env)
 const SMS_SECRET = process.env.BEAUTYCRM_SMS_SECRET || 'change_moi_en_prod'
@@ -445,13 +503,14 @@ router.post('/forfait/demande', async (req, res) => {
     if (!email || !forfait_type || !duree_mois) {
       return res.status(400).json({ message: 'email, forfait_type et duree_mois sont requis' })
     }
-    if (!PRIX_FORFAITS[forfait_type] || !PRIX_FORFAITS[forfait_type][duree_mois]) {
+    const tarifs = await getTarifs()
+    if (!tarifs[forfait_type] || !tarifs[forfait_type][duree_mois] || tarifs[forfait_type][duree_mois].base == null) {
       return res.status(400).json({ message: 'Combinaison forfait_type/duree_mois invalide' })
     }
 
-    let montant = PRIX_FORFAITS[forfait_type][duree_mois]
-    if (ia_addon && PRIX_ADDON_IA[forfait_type]?.[duree_mois]) {
-      montant += PRIX_ADDON_IA[forfait_type][duree_mois]
+    let montant = tarifs[forfait_type][duree_mois].base
+    if (ia_addon && tarifs[forfait_type][duree_mois].ia_addon != null) {
+      montant += tarifs[forfait_type][duree_mois].ia_addon
     }
 
     // Genere un code unique du type BCRM-A1B2C3
@@ -485,20 +544,29 @@ router.post('/forfait/demande', async (req, res) => {
 
 const ADMIN_WHATSAPP = process.env.ADMIN_WHATSAPP_NUMBER || '243835771593'
 
-// Table de correspondance montant (USD) -> plan. Tolerance de 0.05$ pour les arrondis.
-const TABLE_MONTANTS = [
-  { montant: 1.5,  forfait_type: 'personnel',  duree_mois: 1,  ia_addon: false },
-  { montant: 10,   forfait_type: 'personnel',  duree_mois: 12, ia_addon: false },
-  { montant: 2.5,  forfait_type: 'personnel',  duree_mois: 1,  ia_addon: true },
-  { montant: 18,   forfait_type: 'personnel',  duree_mois: 12, ia_addon: true },
-  { montant: 5,    forfait_type: 'entreprise', duree_mois: 1,  ia_addon: false },
-  { montant: 40,   forfait_type: 'entreprise', duree_mois: 12, ia_addon: false },
-  { montant: 8,    forfait_type: 'entreprise', duree_mois: 1,  ia_addon: true },
-  { montant: 65,   forfait_type: 'entreprise', duree_mois: 12, ia_addon: true },
-]
+// Construit dynamiquement la table de correspondance montant (USD) -> plan, depuis les tarifs en base.
+async function construireTableMontants() {
+  const tarifs = await getTarifs()
+  const table = []
+  for (const forfait_type of Object.keys(tarifs)) {
+    if (forfait_type === 'employe_supplementaire') continue
+    for (const duree_mois of Object.keys(tarifs[forfait_type])) {
+      const dureeNum = parseInt(duree_mois)
+      const entry = tarifs[forfait_type][duree_mois]
+      if (entry.base == null) continue
+      table.push({ montant: entry.base, forfait_type, duree_mois: dureeNum, ia_addon: false })
+      if (entry.ia_addon != null) {
+        table.push({ montant: parseFloat((entry.base + entry.ia_addon).toFixed(2)), forfait_type, duree_mois: dureeNum, ia_addon: true })
+      }
+    }
+  }
+  return table
+}
 
-function trouverPlan(montant) {
-  return TABLE_MONTANTS.find(p => Math.abs(p.montant - montant) <= 0.05) || null
+// Tolerance de 0.05$ pour les arrondis.
+async function trouverPlan(montant) {
+  const table = await construireTableMontants()
+  return table.find(p => Math.abs(p.montant - montant) <= 0.05) || null
 }
 
 // Extrait numero expediteur + montant USD depuis differents formats de SMS mobile money.
@@ -541,7 +609,7 @@ router.post('/forfait/sms-recu', async (req, res) => {
       return res.json({ traite: false, raison: 'sms_non_reconnu' })
     }
 
-    const plan = trouverPlan(infos.montant)
+    const plan = await trouverPlan(infos.montant)
     if (!plan) {
       await envoyerWhatsApp(ADMIN_WHATSAPP, `Paiement de ${infos.montant}$ recu de ${infos.nom} (${infos.numero}), mais montant ne correspond a aucun forfait connu. Verification manuelle requise.`)
       return res.json({ traite: false, raison: 'montant_non_reconnu', infos })
