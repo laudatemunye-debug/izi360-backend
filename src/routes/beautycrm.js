@@ -4,6 +4,7 @@ const pool = require('../config/db')
 const auth = require('../middleware/auth')
 const transporter = require('../config/mailer')
 const { envoyerWhatsApp } = require('../utils/whatsapp')
+const { initierPaiement, verifierStatutPaiement } = require('../utils/cinetpay')
 
 const BEAUTYCRM_SECRET = process.env.BEAUTYCRM_SECRET || 'beautycrm_izi360_2026'
 
@@ -702,6 +703,162 @@ router.post('/forfait/valider-code', async (req, res) => {
   } catch (err) {
     console.error(err)
     res.status(500).json({ message: 'Erreur serveur' })
+  }
+})
+
+// Genere un identifiant de transaction unique pour CinetPay (30 caracteres max)
+const genererTransactionId = () => 'BCRM' + Date.now().toString(36).toUpperCase() + Math.random().toString(36).toUpperCase().slice(2, 6)
+
+// Genere un code d'activation manuel a 6 chiffres (meme format que le flux SMS existant)
+const genererCodeManuel = () => Math.floor(100000 + Math.random() * 900000).toString()
+
+// 1. Le client demande a payer par CinetPay -> on cree la demande + on initie le paiement, on retourne payment_url
+router.post('/paiement/initier', async (req, res) => {
+  try {
+    const { secret, email, forfait_type, duree_mois, ia_addon } = req.body
+    if (secret !== BEAUTYCRM_SECRET) return res.status(401).json({ message: 'Non autorise' })
+    if (!email || !forfait_type || !duree_mois) {
+      return res.status(400).json({ message: 'email, forfait_type et duree_mois sont requis' })
+    }
+
+    const tarifs = await getTarifs()
+    if (!tarifs[forfait_type] || !tarifs[forfait_type][duree_mois] || tarifs[forfait_type][duree_mois].base == null) {
+      return res.status(400).json({ message: 'Combinaison forfait_type/duree_mois invalide' })
+    }
+    let montant = tarifs[forfait_type][duree_mois].base
+    if (ia_addon && tarifs[forfait_type][duree_mois].ia_addon != null) {
+      montant += tarifs[forfait_type][duree_mois].ia_addon
+    }
+    montant = Math.round(montant)
+
+    const userRow = await pool.query('SELECT nom, telephone FROM beautycrm_users WHERE email=$1', [email])
+    if (userRow.rows.length === 0) return res.status(404).json({ message: 'Utilisateur introuvable' })
+    const user = userRow.rows[0]
+    const [prenom, ...resteNom] = (user.nom || 'Client BeautyCRM').split(' ')
+    const nomFamille = resteNom.join(' ') || 'BeautyCRM'
+
+    const transactionId = genererTransactionId()
+    const codeManuel = genererCodeManuel()
+
+    await pool.query(
+      `INSERT INTO beautycrm_demandes_paiement (email, code_reference, forfait_type, duree_mois, ia_addon, montant_attendu, statut)
+       VALUES ($1,$2,$3,$4,$5,$6,'attente')`,
+      [email, transactionId, forfait_type, duree_mois, !!ia_addon, montant]
+    )
+
+    const appUrl = process.env.APP_URL || 'https://beautycrm-web.vercel.app'
+    const backendUrl = process.env.BACKEND_URL || 'https://izi360-backend.vercel.app'
+
+    const paiement = await initierPaiement({
+      merchant_transaction_id: transactionId,
+      amount: montant,
+      designation: `Forfait BeautyCRM ${forfait_type} ${duree_mois} mois${ia_addon ? ' + IA' : ''}`,
+      client_email: email,
+      client_first_name: prenom || 'Client',
+      client_last_name: nomFamille,
+      client_phone_number: user.telephone || undefined,
+      success_url: appUrl,
+      failed_url: appUrl,
+      notify_url: `${backendUrl}/api/beautycrm/paiement/notify`,
+    })
+
+    if (paiement.code !== 200 || !paiement.payment_url) {
+      return res.status(502).json({ message: 'Erreur CinetPay lors de l\'initialisation', detail: paiement })
+    }
+
+    await pool.query(
+      "UPDATE beautycrm_demandes_paiement SET notify_token=$1 WHERE code_reference=$2",
+      [paiement.notify_token || null, transactionId]
+    )
+
+    // Envoie deja le code manuel par email/whatsapp en filet de securite, meme avant confirmation
+    // (le code ne devient utilisable qu'une fois le paiement confirme cote CinetPay, voir /paiement/notify)
+
+    res.json({ payment_url: paiement.payment_url, code_reference: transactionId, montant_a_payer: montant })
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ message: 'Erreur serveur' })
+  }
+})
+
+// 2. Webhook CinetPay : ne JAMAIS faire confiance au payload, on revverifie systematiquement via l'API
+router.post('/paiement/notify', async (req, res) => {
+  try {
+    const { merchant_transaction_id } = req.body
+    if (!merchant_transaction_id) return res.status(200).json({ message: 'ignore' })
+
+    const demande = await pool.query(
+      "SELECT * FROM beautycrm_demandes_paiement WHERE code_reference=$1 AND statut='attente'",
+      [merchant_transaction_id]
+    )
+    if (demande.rows.length === 0) {
+      // Deja traite ou inconnu : on repond 200 quand meme pour eviter les retries inutiles de CinetPay
+      return res.status(200).json({ message: 'deja_traite_ou_inconnu' })
+    }
+    const d = demande.rows[0]
+
+    // Source de verite : on revverifie aupres de CinetPay, jamais via le contenu du webhook
+    const statutReel = await verifierStatutPaiement(merchant_transaction_id)
+    if (statutReel.status !== 'SUCCESS') {
+      return res.status(200).json({ message: 'statut_non_confirme', statut: statutReel.status })
+    }
+
+    // Paiement confirme : on active automatiquement le forfait
+    await pool.query(
+      `UPDATE beautycrm_users
+       SET forfait_type = $1,
+           forfait_expire_le = NOW() + ($2 || ' months')::interval,
+           ia_addon = $3,
+           forfait_active_depuis = NOW()
+       WHERE email = $4`,
+      [d.forfait_type, d.duree_mois, d.ia_addon, d.email]
+    )
+
+    await pool.query(
+      "UPDATE beautycrm_demandes_paiement SET statut='confirme', confirme_at=NOW() WHERE id=$1",
+      [d.id]
+    )
+
+    if (d.forfait_type === 'personnel') {
+      await retrograderVersPersonnelSiEntreprise(d.email)
+    } else if (d.forfait_type === 'entreprise') {
+      await notifierActivationEntrepriseDisponible(d.email)
+    }
+
+    // Filet de securite : code manuel a 6 chiffres envoye par email + whatsapp, au cas ou l'app
+    // ne rafraichirait pas automatiquement son statut (autre appareil, app hors-ligne, etc.)
+    const codeManuel = genererCodeManuel()
+    await pool.query(
+      `INSERT INTO beautycrm_demandes_paiement (email, code_reference, forfait_type, duree_mois, ia_addon, montant_attendu, statut)
+       VALUES ($1,$2,$3,$4,$5,$6,'attente')`,
+      [d.email, codeManuel, d.forfait_type, d.duree_mois, d.ia_addon, d.montant_attendu]
+    )
+
+    const userRow = await pool.query('SELECT telephone FROM beautycrm_users WHERE email=$1', [d.email])
+    const telephone = userRow.rows[0]?.telephone
+
+    if (telephone) {
+      await envoyerWhatsApp(
+        telephone,
+        `Paiement confirme ! Votre forfait BeautyCRM ${d.forfait_type} (${d.duree_mois} mois${d.ia_addon ? ' + IA' : ''}) est deja actif.\n\nSi l'application ne le reflete pas automatiquement, entrez ce code dans Parametres > Activer mon forfait : ${codeManuel}`
+      )
+    }
+    try {
+      await transporter.sendMail({
+        from: `"BeautyCRM" <${process.env.MAIL_USER}>`,
+        to: d.email,
+        subject: 'Paiement confirme - Forfait BeautyCRM actif',
+        html: `<p>Bonjour,</p><p>Votre paiement a ete confirme et votre forfait <strong>${d.forfait_type}</strong> (${d.duree_mois} mois${d.ia_addon ? ' + Assistant IA' : ''}) est deja actif.</p><p>Si l'application ne le reflete pas automatiquement, entrez ce code dans <strong>Parametres &gt; Activer mon forfait</strong> : <strong>${codeManuel}</strong></p>`
+      })
+    } catch (mailErr) {
+      console.error('Mail error (paiement/notify):', mailErr.message)
+    }
+
+    res.status(200).json({ message: 'traite', forfait_type: d.forfait_type })
+  } catch (err) {
+    console.error(err)
+    // On repond quand meme 200 pour eviter un retry en boucle sur une erreur de notre cote qu'on va corriger
+    res.status(200).json({ message: 'erreur_interne_loggee' })
   }
 })
 
