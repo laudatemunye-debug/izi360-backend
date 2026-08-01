@@ -730,7 +730,14 @@ router.post('/status-personal', async (req, res) => {
 
     const result = await pool.query('SELECT suspendu, motif_suspension, supprime, motif_suppression FROM beautycrm_users WHERE email=$1', [email])
     const u = result.rows[0]
-    if (!u) return res.json({ blocked: false })
+    if (!u) {
+      return res.json({
+        blocked: true,
+        reason: 'introuvable',
+        motif: null,
+        contact: null,
+      })
+    }
 
     if (u.supprime) {
       return res.json({
