@@ -34,6 +34,26 @@ function invaliderCacheTarifs() {
   _tarifsCache = null
 }
 
+// Cache pour la date fixe de debut d'essai (editable admin, table beautycrm_config)
+let _dateFixeCache = null
+let _dateFixeCacheTime = 0
+
+async function getDateFixeDebutEssai() {
+  const now = Date.now()
+  if (_dateFixeCache && (now - _dateFixeCacheTime) < TARIFS_CACHE_TTL) {
+    return _dateFixeCache
+  }
+  const result = await pool.query("SELECT valeur FROM beautycrm_config WHERE cle='date_fixe_debut_essai'")
+  const valeur = result.rows[0]?.valeur || '2026-09-01T00:00:00Z'
+  _dateFixeCache = new Date(valeur)
+  _dateFixeCacheTime = now
+  return _dateFixeCache
+}
+
+function invaliderCacheDateFixe() {
+  _dateFixeCache = null
+}
+
 // Lecture publique des tarifs (pour affichage dans l'app, avant achat) - protege par secret app
 router.get('/tarifs/public', async (req, res) => {
   try {
@@ -41,6 +61,38 @@ router.get('/tarifs/public', async (req, res) => {
     if (secret !== BEAUTYCRM_SECRET) return res.status(401).json({ message: 'Non autorise' })
     const tarifs = await getTarifs()
     res.json(tarifs)
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ message: 'Erreur serveur' })
+  }
+})
+
+// Lecture/modification de la date fixe de debut d'essai (admin)
+router.get('/config/date-essai', auth, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ message: 'Accès refusé' })
+    const result = await pool.query("SELECT valeur FROM beautycrm_config WHERE cle='date_fixe_debut_essai'")
+    res.json({ valeur: result.rows[0]?.valeur || null })
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ message: 'Erreur serveur' })
+  }
+})
+
+router.put('/config/date-essai', auth, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ message: 'Accès refusé' })
+    const { valeur } = req.body
+    if (!valeur || isNaN(new Date(valeur).getTime())) {
+      return res.status(400).json({ message: 'Date invalide' })
+    }
+    await pool.query(
+      `INSERT INTO beautycrm_config (cle, valeur, updated_at) VALUES ('date_fixe_debut_essai', $1, NOW())
+       ON CONFLICT (cle) DO UPDATE SET valeur = EXCLUDED.valeur, updated_at = NOW()`,
+      [valeur]
+    )
+    invaliderCacheDateFixe()
+    res.json({ message: 'Date mise à jour', valeur })
   } catch (err) {
     console.error(err)
     res.status(500).json({ message: 'Erreur serveur' })
@@ -437,7 +489,7 @@ router.get('/forfait/status', async (req, res) => {
     // Date fixe : tous les comptes crees avant cette date voient leur essai
     // demarrer a cette date (pas a leur inscription reelle). Les comptes
     // crees apres cette date gardent leurs 30 jours a partir de leur propre inscription.
-    const DATE_FIXE_DEBUT_ESSAI = new Date('2026-09-01T00:00:00Z')
+    const DATE_FIXE_DEBUT_ESSAI = await getDateFixeDebutEssai()
     const dateInscription = new Date(u.created_at)
     const debutCompte = dateInscription < DATE_FIXE_DEBUT_ESSAI ? DATE_FIXE_DEBUT_ESSAI : dateInscription
     const finEssai = new Date(debutCompte.getTime() + 30 * 24 * 60 * 60 * 1000)
