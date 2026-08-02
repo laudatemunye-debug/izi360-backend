@@ -54,6 +54,26 @@ function invaliderCacheDateFixe() {
   _dateFixeCache = null
 }
 
+// Cache pour le switch global "essai actif" (editable admin)
+let _essaiActifCache = null
+let _essaiActifCacheTime = 0
+
+async function getEssaiActif() {
+  const now = Date.now()
+  if (_essaiActifCache !== null && (now - _essaiActifCacheTime) < TARIFS_CACHE_TTL) {
+    return _essaiActifCache
+  }
+  const result = await pool.query("SELECT valeur FROM beautycrm_config WHERE cle='essai_actif'")
+  const valeur = result.rows[0]?.valeur
+  _essaiActifCache = valeur !== 'false' // actif par defaut si non defini
+  _essaiActifCacheTime = now
+  return _essaiActifCache
+}
+
+function invaliderCacheEssaiActif() {
+  _essaiActifCache = null
+}
+
 // Lecture publique des tarifs (pour affichage dans l'app, avant achat) - protege par secret app
 router.get('/tarifs/public', async (req, res) => {
   try {
@@ -93,6 +113,39 @@ router.put('/config/date-essai', auth, async (req, res) => {
     )
     invaliderCacheDateFixe()
     res.json({ message: 'Date mise à jour', valeur })
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ message: 'Erreur serveur' })
+  }
+})
+
+// Lecture/modification de l'interrupteur global "essai actif" (admin)
+router.get('/config/essai-actif', auth, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ message: 'Accès refusé' })
+    const result = await pool.query("SELECT valeur FROM beautycrm_config WHERE cle='essai_actif'")
+    const valeur = result.rows[0]?.valeur
+    res.json({ actif: valeur !== 'false' })
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ message: 'Erreur serveur' })
+  }
+})
+
+router.put('/config/essai-actif', auth, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ message: 'Accès refusé' })
+    const { actif } = req.body
+    if (typeof actif !== 'boolean') {
+      return res.status(400).json({ message: 'actif doit etre un booleen' })
+    }
+    await pool.query(
+      `INSERT INTO beautycrm_config (cle, valeur, updated_at) VALUES ('essai_actif', $1, NOW())
+       ON CONFLICT (cle) DO UPDATE SET valeur = EXCLUDED.valeur, updated_at = NOW()`,
+      [actif ? 'true' : 'false']
+    )
+    invaliderCacheEssaiActif()
+    res.json({ message: 'Mise à jour effectuée', actif })
   } catch (err) {
     console.error(err)
     res.status(500).json({ message: 'Erreur serveur' })
@@ -495,14 +548,16 @@ router.get('/forfait/status', async (req, res) => {
     const finEssai = new Date(debutCompte.getTime() + 30 * 24 * 60 * 60 * 1000)
     const forfaitPayantActif = u.forfait_type !== 'essai' && u.forfait_expire_le && new Date(u.forfait_expire_le) > maintenant
 
+    const essaiActif = await getEssaiActif()
+
     let statut, joursRestantsEssai = 0
     if (forfaitPayantActif) {
       statut = u.forfait_type // 'personnel' ou 'entreprise'
-    } else if (maintenant <= finEssai) {
+    } else if (essaiActif && maintenant <= finEssai) {
       statut = 'essai'
       joursRestantsEssai = Math.ceil((finEssai - maintenant) / (24 * 60 * 60 * 1000))
     } else {
-      statut = 'expire' // lecture seule, IA coupee
+      statut = 'expire' // lecture seule, IA coupee (essai desactive globalement ou periode ecoulee)
     }
 
     res.json({
