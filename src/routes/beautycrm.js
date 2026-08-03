@@ -940,6 +940,20 @@ router.post('/utilisateur/pays', async (req, res) => {
   }
 })
 
+// Polling du statut d'un paiement en cours (utilise par le frontend pendant l'ecran "Paiement en attente")
+router.get('/paiement/statut/:transactionId', async (req, res) => {
+  try {
+    const { secret } = req.query
+    if (secret !== BEAUTYCRM_SECRET) return res.status(401).json({ message: 'Non autorise' })
+    const { transactionId } = req.params
+    const statutReel = await verifierStatutPaiement(transactionId)
+    res.json({ status: statutReel.status, code: statutReel.code, message: statutReel.message })
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ message: 'Erreur serveur' })
+  }
+})
+
 // 1. Le client demande a payer par CinetPay -> on cree la demande + on initie le paiement, on retourne payment_url
 router.post('/paiement/initier', async (req, res) => {
   try {
@@ -987,6 +1001,7 @@ router.post('/paiement/initier', async (req, res) => {
       client_last_name: nomFamille,
       client_phone_number: user.telephone || undefined,
       payment_method: payment_method || undefined,
+      direct_pay: !!payment_method,
       success_url: appUrl,
       failed_url: appUrl,
       notify_url: `${backendUrl}/api/beautycrm/paiement/notify`,

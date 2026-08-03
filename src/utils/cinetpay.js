@@ -35,7 +35,7 @@ async function getAccessToken() {
   return _tokenCache
 }
 
-async function initierPaiement({ merchant_transaction_id, amount, currency, designation, client_email, client_first_name, client_last_name, client_phone_number, payment_method, success_url, failed_url, notify_url }) {
+async function initierPaiement({ merchant_transaction_id, amount, currency, designation, client_email, client_first_name, client_last_name, client_phone_number, payment_method, direct_pay, success_url, failed_url, notify_url }) {
   const token = await getAccessToken()
   const resp = await axios.post(relayUrl('/v1/payment'), {
     currency: currency || CURRENCY,
@@ -48,6 +48,7 @@ async function initierPaiement({ merchant_transaction_id, amount, currency, desi
     client_last_name,
     client_phone_number,
     payment_method,
+    direct_pay,
     success_url,
     failed_url,
     notify_url,
