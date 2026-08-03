@@ -819,6 +819,34 @@ const genererTransactionId = () => 'BCRM' + Date.now().toString(36).toUpperCase(
 // Genere un code d'activation manuel a 6 chiffres (meme format que le flux SMS existant)
 const genererCodeManuel = () => Math.floor(100000 + Math.random() * 900000).toString()
 
+// Config admin : taux de change USD -> CDF utilise pour les paiements CinetPay
+router.get('/config/taux-change', auth, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ message: 'Acces refuse' })
+    const r = await pool.query("SELECT valeur FROM beautycrm_config WHERE cle='taux_usd_cdf'")
+    res.json({ taux: parseFloat(r.rows[0]?.valeur || '2400') })
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ message: 'Erreur serveur' })
+  }
+})
+
+router.post('/config/taux-change', auth, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ message: 'Acces refuse' })
+    const { taux } = req.body
+    if (!taux || isNaN(taux) || taux <= 0) return res.status(400).json({ message: 'Taux invalide' })
+    await pool.query(
+      "INSERT INTO beautycrm_config (cle, valeur, updated_at) VALUES ('taux_usd_cdf', $1, NOW()) ON CONFLICT (cle) DO UPDATE SET valeur=$1, updated_at=NOW()",
+      [String(taux)]
+    )
+    res.json({ message: 'Taux mis a jour', taux: parseFloat(taux) })
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ message: 'Erreur serveur' })
+  }
+})
+
 // 1. Le client demande a payer par CinetPay -> on cree la demande + on initie le paiement, on retourne payment_url
 router.post('/paiement/initier', async (req, res) => {
   try {
@@ -837,6 +865,10 @@ router.post('/paiement/initier', async (req, res) => {
       montant += tarifs[forfait_type][duree_mois].ia_addon
     }
     montant = Math.round(montant)
+
+    const tauxRow = await pool.query("SELECT valeur FROM beautycrm_config WHERE cle='taux_usd_cdf'")
+    const tauxUsdCdf = parseFloat(tauxRow.rows[0]?.valeur || '2400')
+    const montantCDF = Math.round(montant * tauxUsdCdf)
 
     const userRow = await pool.query('SELECT nom, telephone FROM beautycrm_users WHERE email=$1', [email])
     if (userRow.rows.length === 0) return res.status(404).json({ message: 'Utilisateur introuvable' })
@@ -858,7 +890,7 @@ router.post('/paiement/initier', async (req, res) => {
 
     const paiement = await initierPaiement({
       merchant_transaction_id: transactionId,
-      amount: montant,
+      amount: montantCDF,
       designation: `Forfait BeautyCRM ${forfait_type} ${duree_mois} mois${ia_addon ? ' + IA' : ''}`,
       client_email: email,
       client_first_name: prenom || 'Client',
