@@ -866,10 +866,6 @@ router.post('/paiement/initier', async (req, res) => {
     }
     montant = Math.round(montant)
 
-    const tauxRow = await pool.query("SELECT valeur FROM beautycrm_config WHERE cle='taux_usd_cdf'")
-    const tauxUsdCdf = parseFloat(tauxRow.rows[0]?.valeur || '2400')
-    const montantCDF = Math.round(montant * tauxUsdCdf)
-
     const userRow = await pool.query('SELECT nom, telephone FROM beautycrm_users WHERE email=$1', [email])
     if (userRow.rows.length === 0) return res.status(404).json({ message: 'Utilisateur introuvable' })
     const user = userRow.rows[0]
@@ -890,7 +886,7 @@ router.post('/paiement/initier', async (req, res) => {
 
     const paiement = await initierPaiement({
       merchant_transaction_id: transactionId,
-      amount: montantCDF,
+      amount: montant,
       designation: `Forfait BeautyCRM ${forfait_type} ${duree_mois} mois${ia_addon ? ' + IA' : ''}`,
       client_email: email,
       client_first_name: prenom || 'Client',
