@@ -75,6 +75,25 @@ function invaliderCacheEssaiActif() {
   _essaiActifCache = null
 }
 
+// Cache pour le taux de change USD -> CDF (editable admin)
+let _tauxCache = null
+let _tauxCacheTime = 0
+
+async function getTauxUsdCdf() {
+  const now = Date.now()
+  if (_tauxCache !== null && (now - _tauxCacheTime) < TARIFS_CACHE_TTL) {
+    return _tauxCache
+  }
+  const result = await pool.query("SELECT valeur FROM beautycrm_config WHERE cle='taux_usd_cdf'")
+  _tauxCache = parseFloat(result.rows[0]?.valeur || '2400')
+  _tauxCacheTime = now
+  return _tauxCache
+}
+
+function invaliderCacheTaux() {
+  _tauxCache = null
+}
+
 // Lecture publique des tarifs (pour affichage dans l'app, avant achat) - protege par secret app
 router.get('/tarifs/public', async (req, res) => {
   try {
@@ -147,6 +166,38 @@ router.put('/config/essai-actif', auth, async (req, res) => {
     )
     invaliderCacheEssaiActif()
     res.json({ message: 'Mise à jour effectuée', actif })
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ message: 'Erreur serveur' })
+  }
+})
+
+// Lecture/modification du taux de change USD -> CDF (admin)
+router.get('/config/taux-usd-cdf', auth, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ message: 'Accès refusé' })
+    const result = await pool.query("SELECT valeur FROM beautycrm_config WHERE cle='taux_usd_cdf'")
+    res.json({ valeur: parseFloat(result.rows[0]?.valeur || '2400') })
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ message: 'Erreur serveur' })
+  }
+})
+
+router.put('/config/taux-usd-cdf', auth, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ message: 'Accès refusé' })
+    const { valeur } = req.body
+    if (valeur == null || isNaN(parseFloat(valeur)) || parseFloat(valeur) <= 0) {
+      return res.status(400).json({ message: 'Taux invalide' })
+    }
+    await pool.query(
+      `INSERT INTO beautycrm_config (cle, valeur, updated_at) VALUES ('taux_usd_cdf', $1, NOW())
+       ON CONFLICT (cle) DO UPDATE SET valeur = EXCLUDED.valeur, updated_at = NOW()`,
+      [String(valeur)]
+    )
+    invaliderCacheTaux()
+    res.json({ message: 'Taux mis à jour', valeur: parseFloat(valeur) })
   } catch (err) {
     console.error(err)
     res.status(500).json({ message: 'Erreur serveur' })
@@ -926,9 +977,14 @@ router.post('/paiement/initier', async (req, res) => {
     const appUrl = process.env.APP_URL || 'https://beautycrm-web.vercel.app'
     const backendUrl = process.env.BACKEND_URL || 'https://izi360-backend.vercel.app'
 
+    // Le compte marchand CinetPay ne facture qu'en CDF : on convertit le montant USD au taux configure
+    const taux = await getTauxUsdCdf()
+    const montantCDF = Math.round(montant * taux)
+
     const paiement = await initierPaiement({
       merchant_transaction_id: transactionId,
-      amount: montant,
+      amount: montantCDF,
+      currency: 'CDF',
       designation: `Forfait BeautyCRM ${forfait_type} ${duree_mois} mois${ia_addon ? ' + IA' : ''}`,
       client_email: email,
       client_first_name: prenom || 'Client',
