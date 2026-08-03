@@ -5,6 +5,7 @@ const auth = require('../middleware/auth')
 const transporter = require('../config/mailer')
 const { envoyerWhatsApp } = require('../utils/whatsapp')
 const { initierPaiement, verifierStatutPaiement } = require('../utils/cinetpay')
+const { detecterPaysDepuisTelephone, methodesPourPays, normaliserPays } = require('../utils/cinetpayPays')
 
 const BEAUTYCRM_SECRET = process.env.BEAUTYCRM_SECRET || 'beautycrm_izi360_2026'
 
@@ -841,6 +842,47 @@ router.post('/config/taux-change', auth, async (req, res) => {
       [String(taux)]
     )
     res.json({ message: 'Taux mis a jour', taux: parseFloat(taux) })
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ message: 'Erreur serveur' })
+  }
+})
+
+// Retourne le pays de l'utilisateur (deduit du telephone si absent, puis persiste) et les methodes de paiement disponibles pour ce pays
+router.get('/paiement/methodes', async (req, res) => {
+  try {
+    const { secret, email } = req.query
+    if (secret !== BEAUTYCRM_SECRET) return res.status(401).json({ message: 'Non autorise' })
+    if (!email) return res.status(400).json({ message: 'email requis' })
+
+    const userRow = await pool.query('SELECT pays, telephone FROM beautycrm_users WHERE email=$1', [email])
+    if (userRow.rows.length === 0) return res.status(404).json({ message: 'Utilisateur introuvable' })
+    let { pays, telephone } = userRow.rows[0]
+
+    let codePays = normaliserPays(pays)
+    if (!codePays) {
+      codePays = detecterPaysDepuisTelephone(telephone) || 'CD'
+      await pool.query('UPDATE beautycrm_users SET pays=$1 WHERE email=$2', [codePays, email])
+    }
+
+    res.json({ pays: codePays, telephone, methodes: methodesPourPays(codePays) })
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ message: 'Erreur serveur' })
+  }
+})
+
+// Permet a l'utilisateur de changer son pays manuellement (ex: deduction automatique incorrecte)
+router.post('/utilisateur/pays', async (req, res) => {
+  try {
+    const { secret, email, pays } = req.body
+    if (secret !== BEAUTYCRM_SECRET) return res.status(401).json({ message: 'Non autorise' })
+    if (!email || !pays) return res.status(400).json({ message: 'email et pays sont requis' })
+
+    const result = await pool.query('UPDATE beautycrm_users SET pays=$1 WHERE email=$2 RETURNING email, pays', [pays, email])
+    if (result.rows.length === 0) return res.status(404).json({ message: 'Utilisateur introuvable' })
+
+    res.json({ message: 'Pays mis a jour', user: result.rows[0], methodes: methodesPourPays(pays) })
   } catch (err) {
     console.error(err)
     res.status(500).json({ message: 'Erreur serveur' })
