@@ -850,7 +850,7 @@ router.post('/config/taux-change', auth, async (req, res) => {
 // 1. Le client demande a payer par CinetPay -> on cree la demande + on initie le paiement, on retourne payment_url
 router.post('/paiement/initier', async (req, res) => {
   try {
-    const { secret, email, forfait_type, duree_mois, ia_addon } = req.body
+    const { secret, email, forfait_type, duree_mois, ia_addon, payment_method } = req.body
     if (secret !== BEAUTYCRM_SECRET) return res.status(401).json({ message: 'Non autorise' })
     if (!email || !forfait_type || !duree_mois) {
       return res.status(400).json({ message: 'email, forfait_type et duree_mois sont requis' })
@@ -892,6 +892,7 @@ router.post('/paiement/initier', async (req, res) => {
       client_first_name: prenom || 'Client',
       client_last_name: nomFamille,
       client_phone_number: user.telephone || undefined,
+      payment_method: payment_method || undefined,
       success_url: appUrl,
       failed_url: appUrl,
       notify_url: `${backendUrl}/api/beautycrm/paiement/notify`,
