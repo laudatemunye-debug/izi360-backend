@@ -977,14 +977,10 @@ router.post('/paiement/initier', async (req, res) => {
     const appUrl = process.env.APP_URL || 'https://beautycrm-web.vercel.app'
     const backendUrl = process.env.BACKEND_URL || 'https://izi360-backend.vercel.app'
 
-    // Le compte marchand CinetPay ne facture qu'en CDF : on convertit le montant USD au taux configure
-    const taux = await getTauxUsdCdf()
-    const montantCDF = Math.round(montant * taux)
-
     const paiement = await initierPaiement({
       merchant_transaction_id: transactionId,
-      amount: montantCDF,
-      currency: 'CDF',
+      amount: montant,
+      currency: 'USD',
       designation: `Forfait BeautyCRM ${forfait_type} ${duree_mois} mois${ia_addon ? ' + IA' : ''}`,
       client_email: email,
       client_first_name: prenom || 'Client',
