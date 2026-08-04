@@ -991,10 +991,14 @@ router.post('/paiement/initier', async (req, res) => {
     const appUrl = process.env.APP_URL || 'https://beautycrm-web.vercel.app'
     const backendUrl = process.env.BACKEND_URL || 'https://izi360-backend.vercel.app'
 
+    const tauxRow = await pool.query("SELECT valeur FROM beautycrm_config WHERE cle='taux_usd_cdf'")
+    const tauxUsdCdf = parseFloat(tauxRow.rows[0]?.valeur || '2400')
+    const montantCDF = Math.round(montant * tauxUsdCdf)
+
     const paiement = await initierPaiement({
       merchant_transaction_id: transactionId,
-      amount: montant,
-      currency: 'USD',
+      amount: montantCDF,
+      currency: 'CDF',
       designation: `Forfait BeautyCRM ${forfait_type} ${duree_mois} mois${ia_addon ? ' + IA' : ''}`,
       client_email: email,
       client_first_name: prenom || 'Client',
