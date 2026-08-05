@@ -5,7 +5,7 @@ const auth = require('../middleware/auth')
 const transporter = require('../config/mailer')
 const { envoyerWhatsApp } = require('../utils/whatsapp')
 const { initierPaiement, verifierStatutPaiement } = require('../utils/cinetpay')
-const { detecterPaysDepuisTelephone, methodesPourPays, normaliserPays } = require('../utils/cinetpayPays')
+const { detecterPaysDepuisTelephone, methodesPourPays, normaliserPays, devisePourPays } = require('../utils/cinetpayPays')
 
 const BEAUTYCRM_SECRET = process.env.BEAUTYCRM_SECRET || 'beautycrm_izi360_2026'
 
@@ -982,6 +982,12 @@ router.post('/paiement/initier', async (req, res) => {
     const [prenom, ...resteNom] = (user.nom || 'Client BeautyCRM').split(' ')
     const nomFamille = resteNom.join(' ') || 'BeautyCRM'
 
+    const paysDetecte = detecterPaysDepuisTelephone(user.telephone)
+    const devise = devisePourPays(paysDetecte)
+    if (!devise) {
+      return res.status(400).json({ message: 'Pays non couvert par CinetPay pour ce numero: ' + (paysDetecte || user.telephone) })
+    }
+
     const transactionId = genererTransactionId()
     const codeManuel = genererCodeManuel()
 
@@ -997,7 +1003,7 @@ router.post('/paiement/initier', async (req, res) => {
     const paiement = await initierPaiement({
       merchant_transaction_id: transactionId,
       amount: montant,
-      currency: 'USD',
+      currency: devise,
       designation: `Forfait BeautyCRM ${forfait_type} ${duree_mois} mois${ia_addon ? ' + IA' : ''}`,
       client_email: email,
       client_first_name: prenom || 'Client',

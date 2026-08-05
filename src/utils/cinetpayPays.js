@@ -41,9 +41,20 @@ function normaliserPays(pays) {
   return NOMS_VERS_CODE[p] || null
 }
 
+const DEVISE_PAR_PAYS = {
+  CI: 'XOF', BF: 'XOF', ML: 'XOF', SN: 'XOF', TG: 'XOF', BJ: 'XOF', NE: 'XOF',
+  CM: 'XAF',
+  GN: 'GNF',
+}
+
+function devisePourPays(pays) {
+  const code = normaliserPays(pays)
+  return code ? (DEVISE_PAR_PAYS[code] || null) : null
+}
+
 function methodesPourPays(pays) {
   const code = normaliserPays(pays)
   return code ? (METHODES_PAR_PAYS[code] || []) : []
 }
 
-module.exports = { METHODES_PAR_PAYS, detecterPaysDepuisTelephone, methodesPourPays, normaliserPays }
+module.exports = { METHODES_PAR_PAYS, detecterPaysDepuisTelephone, methodesPourPays, normaliserPays, devisePourPays }
