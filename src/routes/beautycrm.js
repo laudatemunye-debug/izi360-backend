@@ -589,6 +589,9 @@ router.get('/forfait/status', async (req, res) => {
     )
     if (result.rows.length === 0) return res.status(404).json({ message: 'Utilisateur introuvable' })
 
+    // Enregistre la date de derniere connexion (cette route est appelee a chaque demarrage de l'app)
+    pool.query('UPDATE beautycrm_users SET derniere_connexion = NOW() WHERE email=$1', [email]).catch(e => console.error('Erreur maj derniere_connexion:', e.message))
+
     const u = result.rows[0]
     const maintenant = new Date()
     // Date fixe : tous les comptes crees avant cette date voient leur essai
