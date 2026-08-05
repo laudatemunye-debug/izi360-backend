@@ -47,6 +47,7 @@ const DEVISE_PAR_PAYS = {
   CI: 'USD', BF: 'USD', ML: 'USD', SN: 'USD', TG: 'USD', BJ: 'USD', NE: 'USD',
   CM: 'USD',
   GN: 'USD',
+  CD: 'USD',
 }
 
 function devisePourPays(pays) {
