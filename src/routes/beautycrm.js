@@ -1016,7 +1016,12 @@ router.post('/paiement/initier', async (req, res) => {
       notify_url: `${backendUrl}/api/beautycrm/paiement/notify`,
     })
 
-    if (paiement.code !== 200 || !paiement.payment_url) {
+    const estDirectPay = !!payment_method
+    const paiementOk = estDirectPay
+      ? (paiement.code === 200 && paiement.details?.status === 'PENDING')
+      : (paiement.code === 200 && !!paiement.payment_url)
+
+    if (!paiementOk) {
       return res.status(502).json({ message: 'Erreur CinetPay lors de l\'initialisation', detail: paiement })
     }
 
@@ -1028,7 +1033,13 @@ router.post('/paiement/initier', async (req, res) => {
     // Envoie deja le code manuel par email/whatsapp en filet de securite, meme avant confirmation
     // (le code ne devient utilisable qu'une fois le paiement confirme cote CinetPay, voir /paiement/notify)
 
-    res.json({ payment_url: paiement.payment_url, code_reference: transactionId, montant_a_payer: montant })
+    res.json({
+      payment_url: paiement.payment_url || null,
+      direct_pay: estDirectPay,
+      statut_initial: paiement.details?.status || null,
+      code_reference: transactionId,
+      montant_a_payer: montant,
+    })
   } catch (err) {
     console.error(err)
     res.status(500).json({ message: 'Erreur serveur' })
