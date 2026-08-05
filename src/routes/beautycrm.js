@@ -1005,8 +1005,8 @@ router.post('/paiement/initier', async (req, res) => {
       client_phone_number: user.telephone || undefined,
       payment_method: payment_method || undefined,
       direct_pay: !!payment_method,
-      success_url: appUrl,
-      failed_url: appUrl,
+      success_url: `${appUrl}?paiement=succes`,
+      failed_url: `${appUrl}?paiement=echec`,
       notify_url: `${backendUrl}/api/beautycrm/paiement/notify`,
     })
 
