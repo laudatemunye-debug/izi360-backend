@@ -1002,6 +1002,10 @@ router.post('/paiement/initier', async (req, res) => {
     const appUrl = process.env.APP_URL || 'https://beautycrm-web.vercel.app'
     const backendUrl = process.env.BACKEND_URL || 'https://izi360-backend.vercel.app'
 
+    console.log('DEBUG paiement payload:', JSON.stringify({
+      transactionId, montant, devise, telephonePaiement, prenom, nomFamille, payment_method,
+    }))
+
     const paiement = await initierPaiement({
       merchant_transaction_id: transactionId,
       amount: montant,
