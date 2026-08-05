@@ -960,7 +960,7 @@ router.get('/paiement/statut/:transactionId', async (req, res) => {
 // 1. Le client demande a payer par CinetPay -> on cree la demande + on initie le paiement, on retourne payment_url
 router.post('/paiement/initier', async (req, res) => {
   try {
-    const { secret, email, forfait_type, duree_mois, ia_addon, payment_method } = req.body
+    const { secret, email, forfait_type, duree_mois, ia_addon, payment_method, telephone } = req.body
     if (secret !== BEAUTYCRM_SECRET) return res.status(401).json({ message: 'Non autorise' })
     if (!email || !forfait_type || !duree_mois) {
       return res.status(400).json({ message: 'email, forfait_type et duree_mois sont requis' })
@@ -979,10 +979,12 @@ router.post('/paiement/initier', async (req, res) => {
     const userRow = await pool.query('SELECT nom, telephone FROM beautycrm_users WHERE email=$1', [email])
     if (userRow.rows.length === 0) return res.status(404).json({ message: 'Utilisateur introuvable' })
     const user = userRow.rows[0]
+    // Le numero tape par le client dans le formulaire de paiement prime sur celui en base
+    const telephonePaiement = (telephone && telephone.trim()) || user.telephone
     const [prenom, ...resteNom] = (user.nom || 'Client BeautyCRM').split(' ')
     const nomFamille = resteNom.join(' ') || 'BeautyCRM'
 
-    const paysDetecte = detecterPaysDepuisTelephone(user.telephone)
+    const paysDetecte = detecterPaysDepuisTelephone(telephonePaiement)
     const devise = devisePourPays(paysDetecte)
     if (!devise) {
       return res.status(400).json({ message: 'Pays non couvert par CinetPay pour ce numero: ' + (paysDetecte || user.telephone) })
@@ -1008,7 +1010,7 @@ router.post('/paiement/initier', async (req, res) => {
       client_email: email,
       client_first_name: prenom || 'Client',
       client_last_name: nomFamille,
-      client_phone_number: user.telephone || undefined,
+      client_phone_number: telephonePaiement || undefined,
       payment_method: payment_method || undefined,
       direct_pay: !!payment_method,
       success_url: `${appUrl}?paiement=succes`,
