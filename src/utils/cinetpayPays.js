@@ -41,10 +41,12 @@ function normaliserPays(pays) {
   return NOMS_VERS_CODE[p] || null
 }
 
+// Compte CinetPay actuel configure en USD uniquement (a ajuster si le compte
+// est etendu a d'autres devises locales cote CinetPay)
 const DEVISE_PAR_PAYS = {
-  CI: 'XOF', BF: 'XOF', ML: 'XOF', SN: 'XOF', TG: 'XOF', BJ: 'XOF', NE: 'XOF',
-  CM: 'XAF',
-  GN: 'GNF',
+  CI: 'USD', BF: 'USD', ML: 'USD', SN: 'USD', TG: 'USD', BJ: 'USD', NE: 'USD',
+  CM: 'USD',
+  GN: 'USD',
 }
 
 function devisePourPays(pays) {
