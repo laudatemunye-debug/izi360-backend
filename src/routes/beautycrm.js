@@ -950,6 +950,19 @@ router.get('/paiement/statut/:transactionId', async (req, res) => {
     if (secret !== BEAUTYCRM_SECRET) return res.status(401).json({ message: 'Non autorise' })
     const { transactionId } = req.params
     const statutReel = await verifierStatutPaiement(transactionId)
+
+    if (statutReel.status === 'SUCCESS') {
+      // Filet de securite : si le webhook CinetPay n'est pas encore passe, on active ici
+      // des que l'app detecte elle-meme le succes via polling.
+      const demande = await pool.query(
+        "SELECT * FROM beautycrm_demandes_paiement WHERE code_reference=$1 AND statut='attente'",
+        [transactionId]
+      )
+      if (demande.rows.length > 0) {
+        await activerForfaitPourDemande(demande.rows[0])
+      }
+    }
+
     res.json({ status: statutReel.status, code: statutReel.code, message: statutReel.message })
   } catch (err) {
     console.error(err)
@@ -1049,6 +1062,61 @@ router.post('/paiement/initier', async (req, res) => {
   }
 })
 
+// Active le forfait pour une demande de paiement confirmee (statut CinetPay = SUCCESS).
+// Utilisee a la fois par le webhook CinetPay et par le polling de statut cote app,
+// pour que l'activation se fasse meme si le webhook tarde ou echoue.
+async function activerForfaitPourDemande(d) {
+  await pool.query(
+    `UPDATE beautycrm_users
+     SET forfait_type = $1,
+         forfait_expire_le = NOW() + ($2 || ' months')::interval,
+         ia_addon = $3,
+         forfait_active_depuis = NOW()
+     WHERE email = $4`,
+    [d.forfait_type, d.duree_mois, d.ia_addon, d.email]
+  )
+
+  await pool.query(
+    "UPDATE beautycrm_demandes_paiement SET statut='confirme', confirme_at=NOW() WHERE id=$1",
+    [d.id]
+  )
+
+  if (d.forfait_type === 'personnel') {
+    await retrograderVersPersonnelSiEntreprise(d.email)
+  } else if (d.forfait_type === 'entreprise') {
+    await notifierActivationEntrepriseDisponible(d.email)
+  }
+
+  // Filet de securite : code manuel a 6 chiffres envoye par email + whatsapp, au cas ou l'app
+  // ne rafraichirait pas automatiquement son statut (autre appareil, app hors-ligne, etc.)
+  const codeManuel = genererCodeManuel()
+  await pool.query(
+    `INSERT INTO beautycrm_demandes_paiement (email, code_reference, forfait_type, duree_mois, ia_addon, montant_attendu, statut)
+     VALUES ($1,$2,$3,$4,$5,$6,'attente')`,
+    [d.email, codeManuel, d.forfait_type, d.duree_mois, d.ia_addon, d.montant_attendu]
+  )
+
+  const userRow = await pool.query('SELECT telephone FROM beautycrm_users WHERE email=$1', [d.email])
+  const telephone = userRow.rows[0]?.telephone
+
+  if (telephone) {
+    await envoyerWhatsApp(
+      telephone,
+      `Paiement confirme ! Votre forfait BeautyCRM ${d.forfait_type} (${d.duree_mois} mois${d.ia_addon ? ' + IA' : ''}) est deja actif.\n\nSi l'application ne le reflete pas automatiquement, entrez ce code dans Parametres > Activer mon forfait : ${codeManuel}`
+    )
+  }
+  try {
+    await transporter.sendMail({
+      from: `"BeautyCRM" <${process.env.MAIL_USER}>`,
+      to: d.email,
+      subject: 'Paiement confirme - Forfait BeautyCRM actif',
+      html: `<p>Bonjour,</p><p>Votre paiement a ete confirme et votre forfait <strong>${d.forfait_type}</strong> (${d.duree_mois} mois${d.ia_addon ? ' + Assistant IA' : ''}) est deja actif.</p><p>Si l'application ne le reflete pas automatiquement, entrez ce code dans <strong>Parametres &gt; Activer mon forfait</strong> : <strong>${codeManuel}</strong></p>`
+    })
+  } catch (mailErr) {
+    console.error('Mail error (activation forfait):', mailErr.message)
+  }
+}
+
 // 2. Webhook CinetPay : ne JAMAIS faire confiance au payload, on revverifie systematiquement via l'API
 router.post('/paiement/notify', async (req, res) => {
   try {
@@ -1071,56 +1139,7 @@ router.post('/paiement/notify', async (req, res) => {
       return res.status(200).json({ message: 'statut_non_confirme', statut: statutReel.status })
     }
 
-    // Paiement confirme : on active automatiquement le forfait
-    await pool.query(
-      `UPDATE beautycrm_users
-       SET forfait_type = $1,
-           forfait_expire_le = NOW() + ($2 || ' months')::interval,
-           ia_addon = $3,
-           forfait_active_depuis = NOW()
-       WHERE email = $4`,
-      [d.forfait_type, d.duree_mois, d.ia_addon, d.email]
-    )
-
-    await pool.query(
-      "UPDATE beautycrm_demandes_paiement SET statut='confirme', confirme_at=NOW() WHERE id=$1",
-      [d.id]
-    )
-
-    if (d.forfait_type === 'personnel') {
-      await retrograderVersPersonnelSiEntreprise(d.email)
-    } else if (d.forfait_type === 'entreprise') {
-      await notifierActivationEntrepriseDisponible(d.email)
-    }
-
-    // Filet de securite : code manuel a 6 chiffres envoye par email + whatsapp, au cas ou l'app
-    // ne rafraichirait pas automatiquement son statut (autre appareil, app hors-ligne, etc.)
-    const codeManuel = genererCodeManuel()
-    await pool.query(
-      `INSERT INTO beautycrm_demandes_paiement (email, code_reference, forfait_type, duree_mois, ia_addon, montant_attendu, statut)
-       VALUES ($1,$2,$3,$4,$5,$6,'attente')`,
-      [d.email, codeManuel, d.forfait_type, d.duree_mois, d.ia_addon, d.montant_attendu]
-    )
-
-    const userRow = await pool.query('SELECT telephone FROM beautycrm_users WHERE email=$1', [d.email])
-    const telephone = userRow.rows[0]?.telephone
-
-    if (telephone) {
-      await envoyerWhatsApp(
-        telephone,
-        `Paiement confirme ! Votre forfait BeautyCRM ${d.forfait_type} (${d.duree_mois} mois${d.ia_addon ? ' + IA' : ''}) est deja actif.\n\nSi l'application ne le reflete pas automatiquement, entrez ce code dans Parametres > Activer mon forfait : ${codeManuel}`
-      )
-    }
-    try {
-      await transporter.sendMail({
-        from: `"BeautyCRM" <${process.env.MAIL_USER}>`,
-        to: d.email,
-        subject: 'Paiement confirme - Forfait BeautyCRM actif',
-        html: `<p>Bonjour,</p><p>Votre paiement a ete confirme et votre forfait <strong>${d.forfait_type}</strong> (${d.duree_mois} mois${d.ia_addon ? ' + Assistant IA' : ''}) est deja actif.</p><p>Si l'application ne le reflete pas automatiquement, entrez ce code dans <strong>Parametres &gt; Activer mon forfait</strong> : <strong>${codeManuel}</strong></p>`
-      })
-    } catch (mailErr) {
-      console.error('Mail error (paiement/notify):', mailErr.message)
-    }
+    await activerForfaitPourDemande(d)
 
     res.status(200).json({ message: 'traite', forfait_type: d.forfait_type })
   } catch (err) {
