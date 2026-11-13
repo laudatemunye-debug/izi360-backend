@@ -32,6 +32,7 @@ app.use('/api/brevets', require('./routes/brevets'))
 app.use('/api/formations', require('./routes/formations'))
 app.use('/api/cron', require('./routes/cron'))
 app.use('/api/formateurs', require('./routes/formateurs'))
+app.use('/api/likelemba', require('./routes/likelemba'))
 
 if (process.env.NODE_ENV !== 'production') {
   const PORT = process.env.PORT || 5000
