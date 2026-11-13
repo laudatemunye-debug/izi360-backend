@@ -32,7 +32,11 @@ app.use('/api/brevets', require('./routes/brevets'))
 app.use('/api/formations', require('./routes/formations'))
 app.use('/api/cron', require('./routes/cron'))
 app.use('/api/formateurs', require('./routes/formateurs'))
-try { app.use('/api/likelemba', require('./routes/likelemba')) } catch (e) { console.error('Likelemba indisponible:', e.message) }
+try { app.use('/api/likelemba', require('./routes/likelemba')) } catch (e) {
+  console.error('Likelemba indisponible:', e.message)
+  const diag = String(e.message).split('\n')[0].slice(0, 200)
+  app.get('/api/likelemba/_diag', (req, res) => res.json({ error: diag }))
+}
 
 if (process.env.NODE_ENV !== 'production') {
   const PORT = process.env.PORT || 5000
