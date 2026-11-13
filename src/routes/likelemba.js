@@ -7,13 +7,18 @@ const admin = require('../middleware/admin')
 
 const router = express.Router()
 
-const hasVapid = !!(process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY)
+let hasVapid = !!(process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY)
 if (hasVapid) {
-  webpush.setVapidDetails(
-    process.env.VAPID_SUBJECT || 'mailto:contact@izi360.org',
-    process.env.VAPID_PUBLIC_KEY,
-    process.env.VAPID_PRIVATE_KEY
-  )
+  try {
+    webpush.setVapidDetails(
+      (process.env.VAPID_SUBJECT || 'mailto:contact@izi360.org').trim(),
+      process.env.VAPID_PUBLIC_KEY.trim(),
+      process.env.VAPID_PRIVATE_KEY.trim()
+    )
+  } catch (e) {
+    console.error('likelemba: cles VAPID invalides:', e.message)
+    hasVapid = false
+  }
 }
 
 const limiter = rateLimit({ windowMs: 60 * 1000, limit: 40, standardHeaders: true, legacyHeaders: false })
@@ -47,7 +52,7 @@ async function pushAll(payload) {
 
 /* ---------------------- Côté app (public) ---------------------- */
 
-router.get('/vapid-public', (req, res) => res.json({ key: process.env.VAPID_PUBLIC_KEY || null }))
+router.get('/vapid-public', (req, res) => res.json({ key: (process.env.VAPID_PUBLIC_KEY || '').trim() || null }))
 
 router.post('/ping', limiter, wrap(async (req, res) => {
   const b = req.body || {}
